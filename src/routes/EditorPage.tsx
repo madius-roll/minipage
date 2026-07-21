@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import Header from '../components/layout/Header';
-import ToolPanel, { type DrawMode } from '../components/layout/ToolPanel';
+import ToolPanel, { DEFAULT_DRAW_FORM, type DrawFormState, type DrawMode } from '../components/layout/ToolPanel';
 import LayerPanel from '../components/layout/LayerPanel';
 import PropertyPanel from '../components/layout/PropertyPanel';
 import CadCanvas, { type CadCanvasHandle } from '../components/canvas/CadCanvas';
 import LawGuideModal from '../components/guide/LawGuideModal';
 import MobileSheetHandle from '../components/layout/MobileSheetHandle';
+import MobileLayerStrip from '../components/layout/MobileLayerStrip';
 import { dummyLayers, dummyShapes } from '../data/dummyDrawing';
 import { ALL_LAYERS_ID, LAYER_COLOR_PALETTE, MAX_LAYERS } from '../data/layerMeta';
 import type { Layer, LayerCategory, Point, Shape } from '../types/cad';
@@ -25,6 +26,7 @@ export default function EditorPage() {
   const [layers, setLayers] = useState<Layer[]>(dummyLayers);
   const [shapes, setShapes] = useState<Shape[]>(dummyShapes);
   const [drawMode, setDrawMode] = useState<DrawMode>('line');
+  const [drawForm, setDrawForm] = useState<DrawFormState>(DEFAULT_DRAW_FORM);
   const [activeLayerId, setActiveLayerId] = useState<string>(dummyLayers[0].id);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [pendingPoint, setPendingPoint] = useState<Point>(ORIGIN);
@@ -43,10 +45,9 @@ export default function EditorPage() {
     }
   }, [layers, activeLayerId]);
 
-  // 모바일: 도형을 선택하면 속성을 바로 볼 수 있도록 하단 시트를 자동으로 펼친다 (PC에서는 시각적으로 영향 없음)
-  useEffect(() => {
-    if (selectedIds.length > 0) setMobileSheetOpen(true);
-  }, [selectedIds]);
+  const updateDrawForm = (patch: Partial<DrawFormState>) => {
+    setDrawForm((prev) => ({ ...prev, ...patch }));
+  };
 
   const handleActiveLayerChange = (id: string) => {
     setActiveLayerId(id);
@@ -231,6 +232,12 @@ export default function EditorPage() {
     <div className="app-shell" data-mobile-sheet={mobileSheetOpen ? 'open' : 'closed'}>
       <Header onOpenGuide={() => setGuideOpen(true)} />
 
+      <MobileLayerStrip
+        layers={layers}
+        activeLayerId={activeLayerId}
+        onSelectActiveLayer={handleActiveLayerChange}
+      />
+
       <div className="app-body">
         <aside className="editor-sidebar">
           <ToolPanel
@@ -240,6 +247,8 @@ export default function EditorPage() {
             mode={drawMode}
             onModeChange={setDrawMode}
             pendingPoint={pendingPoint}
+            drawForm={drawForm}
+            onDrawFormChange={updateDrawForm}
             onAddLine={handleAddLine}
             onAddCircle={handleAddCircle}
             onAddRect={handleAddRect}
@@ -284,6 +293,7 @@ export default function EditorPage() {
             onUndo={handleUndo}
             canUndo={shapes.length > dummyShapes.length}
             activeLayerId={activeLayerId}
+            onDeleteSelected={handleDeleteSelected}
           />
         </main>
       </div>
@@ -304,6 +314,13 @@ export default function EditorPage() {
         layerName={activeLayerLabel}
         layerColor={activeLayerColor}
         mode={drawMode}
+        isDrawable={activeLayerId !== ALL_LAYERS_ID}
+        isBeam={activeLayer?.category === 'beam'}
+        drawForm={drawForm}
+        onDrawFormChange={updateDrawForm}
+        onAddLine={handleAddLine}
+        onAddCircle={handleAddCircle}
+        onAddText={handleAddText}
         open={mobileSheetOpen}
         onToggle={() => setMobileSheetOpen((prev) => !prev)}
       />

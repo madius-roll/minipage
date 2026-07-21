@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import type { FormEvent } from 'react';
 import Button from '../ui/Button';
 import { IconCircle, IconLine, IconText } from '../ui/Icon';
 import type { Layer, Point } from '../../types/cad';
@@ -7,7 +7,30 @@ import './panels.css';
 import './ToolPanel.css';
 
 export type DrawMode = 'line' | 'circle' | 'text';
-type ColumnShape = 'circle' | 'rect';
+export type ColumnShape = 'circle' | 'rect';
+
+/** 선/도형/텍스트 입력값 — 하단 시트 접힌 상태의 미니 입력창과 값을 공유하기 위해 EditorPage에서 관리한다 */
+export interface DrawFormState {
+  lengthMm: string;
+  angleDeg: string;
+  thicknessMm: string;
+  radiusMm: string;
+  widthMm: string;
+  heightMm: string;
+  columnShape: ColumnShape;
+  textValue: string;
+}
+
+export const DEFAULT_DRAW_FORM: DrawFormState = {
+  lengthMm: '',
+  angleDeg: '',
+  thicknessMm: String(DEFAULT_BEAM_THICKNESS_MM),
+  radiusMm: '',
+  widthMm: '400',
+  heightMm: '400',
+  columnShape: 'circle',
+  textValue: '',
+};
 
 interface ToolPanelProps {
   layers: Layer[];
@@ -16,6 +39,8 @@ interface ToolPanelProps {
   mode: DrawMode;
   onModeChange: (mode: DrawMode) => void;
   pendingPoint: Point;
+  drawForm: DrawFormState;
+  onDrawFormChange: (patch: Partial<DrawFormState>) => void;
   onAddLine: (lengthMm: number, angleDeg: number, thicknessMm?: number) => void;
   onAddCircle: (radiusMm: number) => void;
   onAddRect: (widthMm: number, heightMm: number) => void;
@@ -35,6 +60,8 @@ export default function ToolPanel({
   mode,
   onModeChange,
   pendingPoint,
+  drawForm,
+  onDrawFormChange,
   onAddLine,
   onAddCircle,
   onAddRect,
@@ -45,14 +72,7 @@ export default function ToolPanel({
   onClearAll,
   canClearAll,
 }: ToolPanelProps) {
-  const [lengthMm, setLengthMm] = useState('');
-  const [angleDeg, setAngleDeg] = useState('');
-  const [thicknessMm, setThicknessMm] = useState(String(DEFAULT_BEAM_THICKNESS_MM));
-  const [radiusMm, setRadiusMm] = useState('');
-  const [widthMm, setWidthMm] = useState('400');
-  const [heightMm, setHeightMm] = useState('400');
-  const [columnShape, setColumnShape] = useState<ColumnShape>('circle');
-  const [textValue, setTextValue] = useState('');
+  const { lengthMm, angleDeg, thicknessMm, radiusMm, widthMm, heightMm, columnShape, textValue } = drawForm;
 
   const isAllLayers = activeLayerId === ALL_LAYERS_ID;
   const activeLayer = layers.find((l) => l.id === activeLayerId);
@@ -75,15 +95,14 @@ export default function ToolPanel({
     e.preventDefault();
     if (!lineValid) return;
     onAddLine(length, angle, isBeam ? thickness : undefined);
-    setLengthMm('');
-    setAngleDeg('');
+    onDrawFormChange({ lengthMm: '', angleDeg: '' });
   };
 
   const handleSubmitText = (e: FormEvent) => {
     e.preventDefault();
     if (!textValid) return;
     onAddText(textValue.trim());
-    setTextValue('');
+    onDrawFormChange({ textValue: '' });
   };
 
   const handleSubmitPoint = (e: FormEvent) => {
@@ -95,14 +114,14 @@ export default function ToolPanel({
       if (!circleValid) return;
       onAddCircle(radius);
     }
-    setRadiusMm('');
+    onDrawFormChange({ radiusMm: '' });
   };
 
   return (
     <section className="panel tool-panel">
       <h2 className="panel-title">그리기 도구</h2>
 
-      <div className="field">
+      <div className="field tool-active-layer-field">
         <label htmlFor="active-layer">그릴 레이어</label>
         <select id="active-layer" value={activeLayerId} onChange={(e) => onActiveLayerChange(e.target.value)}>
           <option value={ALL_LAYERS_ID}>전체 레이어</option>
@@ -160,7 +179,7 @@ export default function ToolPanel({
         <form className="tool-form" onSubmit={handleSubmitText}>
           <div className="field">
             <label htmlFor="text-content">텍스트 내용</label>
-            <input id="text-content" type="text" placeholder="예: 소화전 위치" value={textValue} onChange={(e) => setTextValue(e.target.value)} />
+            <input id="text-content" type="text" placeholder="예: 소화전 위치" value={textValue} onChange={(e) => onDrawFormChange({ textValue: e.target.value })} />
           </div>
           <Button type="submit" size="sm" disabled={!textValid} className="tool-submit">텍스트 추가</Button>
         </form>
@@ -168,16 +187,16 @@ export default function ToolPanel({
         <form className="tool-form" onSubmit={handleSubmitLine}>
           <div className="field">
             <label htmlFor="length">길이 (mm)</label>
-            <input id="length" type="number" min="1" placeholder="예: 3000" value={lengthMm} onChange={(e) => setLengthMm(e.target.value)} />
+            <input id="length" type="number" min="1" placeholder="예: 3000" value={lengthMm} onChange={(e) => onDrawFormChange({ lengthMm: e.target.value })} />
           </div>
           <div className="field">
             <label htmlFor="angle">각도 (°)</label>
-            <input id="angle" type="number" placeholder="예: 90" value={angleDeg} onChange={(e) => setAngleDeg(e.target.value)} />
+            <input id="angle" type="number" placeholder="예: 90" value={angleDeg} onChange={(e) => onDrawFormChange({ angleDeg: e.target.value })} />
           </div>
           {isBeam && (
             <div className="field">
               <label htmlFor="thickness">두께 (mm)</label>
-              <input id="thickness" type="number" min="1" placeholder="예: 300" value={thicknessMm} onChange={(e) => setThicknessMm(e.target.value)} />
+              <input id="thickness" type="number" min="1" placeholder="예: 300" value={thicknessMm} onChange={(e) => onDrawFormChange({ thicknessMm: e.target.value })} />
             </div>
           )}
           <Button type="submit" size="sm" disabled={!lineValid} className="tool-submit">선 추가</Button>
@@ -186,10 +205,10 @@ export default function ToolPanel({
         <form className="tool-form" onSubmit={handleSubmitPoint}>
           {isColumn && (
             <div className="tool-mode-switch">
-              <Button type="button" size="sm" variant="ghost" active={columnShape === 'circle'} onClick={() => setColumnShape('circle')}>
+              <Button type="button" size="sm" variant="ghost" active={columnShape === 'circle'} onClick={() => onDrawFormChange({ columnShape: 'circle' })}>
                 원형
               </Button>
-              <Button type="button" size="sm" variant="ghost" active={columnShape === 'rect'} onClick={() => setColumnShape('rect')}>
+              <Button type="button" size="sm" variant="ghost" active={columnShape === 'rect'} onClick={() => onDrawFormChange({ columnShape: 'rect' })}>
                 사각형
               </Button>
             </div>
@@ -199,11 +218,11 @@ export default function ToolPanel({
             <>
               <div className="field">
                 <label htmlFor="width">가로 (mm)</label>
-                <input id="width" type="number" min="1" placeholder="예: 400" value={widthMm} onChange={(e) => setWidthMm(e.target.value)} />
+                <input id="width" type="number" min="1" placeholder="예: 400" value={widthMm} onChange={(e) => onDrawFormChange({ widthMm: e.target.value })} />
               </div>
               <div className="field">
                 <label htmlFor="height">세로 (mm)</label>
-                <input id="height" type="number" min="1" placeholder="예: 400" value={heightMm} onChange={(e) => setHeightMm(e.target.value)} />
+                <input id="height" type="number" min="1" placeholder="예: 400" value={heightMm} onChange={(e) => onDrawFormChange({ heightMm: e.target.value })} />
               </div>
               <Button type="submit" size="sm" disabled={!rectValid} className="tool-submit">사각형 추가</Button>
             </>
@@ -211,7 +230,7 @@ export default function ToolPanel({
             <>
               <div className="field">
                 <label htmlFor="radius">반지름 (mm)</label>
-                <input id="radius" type="number" min="1" placeholder="예: 2600" value={radiusMm} onChange={(e) => setRadiusMm(e.target.value)} />
+                <input id="radius" type="number" min="1" placeholder="예: 2600" value={radiusMm} onChange={(e) => onDrawFormChange({ radiusMm: e.target.value })} />
               </div>
               <Button type="submit" size="sm" disabled={!circleValid} className="tool-submit">원 추가</Button>
             </>

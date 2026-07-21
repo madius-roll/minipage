@@ -94,3 +94,10 @@
   background: var(--danger);
   color: #fff;
 }
+
+@media (max-width: 860px) {
+  /* 상단 레이어 스트립이 같은 역할을 하므로 시트 안 드롭다운은 숨긴다 */
+  .tool-active-layer-field {
+    display: none;
+  }
+}

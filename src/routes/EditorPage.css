@@ -13,10 +13,10 @@
 }
 
 @media (max-width: 860px) {
-  /* 캔버스는 헤더 아래 화면 전체를 꽉 채운다 (하단 시트가 그 위에 겹쳐 뜬다) */
+  /* 캔버스는 헤더+레이어 스트립 아래 화면 전체를 꽉 채운다 (하단 시트가 그 위에 겹쳐 뜬다) */
   .editor-canvas-area {
     position: fixed;
-    top: 56px;
+    top: calc(56px + var(--mobile-strip-h));
     left: 0;
     right: 0;
     bottom: 0;
@@ -30,15 +30,14 @@
     position: fixed;
     left: 0;
     right: 0;
-    bottom: var(--sheet-property-h);
+    bottom: 0;
     height: var(--sheet-sidebar-h);
     z-index: 25;
     overflow-x: hidden;
     overflow-y: auto;
     background: var(--surface);
     box-shadow: 0 -8px 24px rgba(0, 0, 0, .45);
-    /* bottom이 속성 패널 높이만큼 이미 떠 있으므로, 자기 높이(%)가 아니라 실제로 내려가야 할 절대 거리로 옮긴다 */
-    transform: translateY(calc(var(--sheet-sidebar-h) + var(--sheet-property-h) + 20px));
+    transform: translateY(calc(100% + 20px));
     transition: transform .25s ease;
   }
   .app-shell[data-mobile-sheet="open"] .editor-sidebar {

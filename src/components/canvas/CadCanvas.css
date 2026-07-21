@@ -88,6 +88,10 @@
   font-family: var(--font-family);
 }
 
+.cad-delete-selected {
+  display: none;
+}
+
 @media (max-width: 860px) {
   /* 하단에 항상 떠 있는 모바일 시트 손잡이(약 64px)에 가리지 않도록 띄워준다 */
   .cad-zoom-controls {
@@ -102,6 +106,28 @@
   .cad-zoom-btn {
     width: 32px;
     height: 32px;
+  }
+
+  /* 모바일 전용: 속성 패널이 없어진 대신, 선택된 도형을 바로 지울 수 있는 작은 버튼 */
+  .cad-delete-selected {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-sm);
+    border: 1.5px solid var(--danger);
+    background: var(--surface);
+    color: var(--danger);
+    z-index: 5;
+  }
+
+  .cad-delete-selected .icon {
+    width: 17px;
+    height: 17px;
   }
 }
 

@@ -16,7 +16,7 @@ import {
 } from '../../utils/geometry';
 import { ALL_LAYERS_ID } from '../../data/layerMeta';
 import type { DrawMode } from '../layout/ToolPanel';
-import { IconFit, IconUndo, IconZoomIn, IconZoomOut } from '../ui/Icon';
+import { IconFit, IconTrash, IconUndo, IconZoomIn, IconZoomOut } from '../ui/Icon';
 import './CadCanvas.css';
 
 interface CadCanvasProps {
@@ -31,6 +31,7 @@ interface CadCanvasProps {
   onUndo: () => void;
   canUndo: boolean;
   activeLayerId: string;
+  onDeleteSelected: () => void;
 }
 
 export interface CadCanvasHandle {
@@ -71,7 +72,7 @@ interface PinchState {
 }
 
 const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas(
-  { shapes, layers, selectedIds, onSelect, pendingPoint, mode, onCanvasClick, onMoveShapes, onUndo, canUndo, activeLayerId },
+  { shapes, layers, selectedIds, onSelect, pendingPoint, mode, onCanvasClick, onMoveShapes, onUndo, canUndo, activeLayerId, onDeleteSelected },
   ref,
 ) {
   const svgRef = useRef<SVGSVGElement>(null);
@@ -604,6 +605,12 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
           />
         )}
       </svg>
+
+      {selectedIds.length > 0 && (
+        <button type="button" className="cad-delete-selected" onClick={onDeleteSelected} aria-label="선택한 도형 삭제">
+          <IconTrash />
+        </button>
+      )}
 
       <div className="cad-quick-actions">
         <button type="button" className="cad-zoom-btn" onClick={onUndo} disabled={!canUndo} aria-label="실행 취소">

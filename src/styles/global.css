@@ -80,8 +80,8 @@ a {
   /* 모바일: 캔버스가 화면 전체를 채우고, 그리기 도구/레이어/속성은 하단 시트로 그 위에 뜬다 */
   .app-shell {
     grid-template-rows: 56px 1fr;
-    --sheet-sidebar-h: 40vh;
-    --sheet-property-h: 34vh;
+    --sheet-sidebar-h: 62vh;
+    --mobile-strip-h: 44px;
   }
   .app-body {
     display: block;

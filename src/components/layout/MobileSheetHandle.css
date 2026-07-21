@@ -3,29 +3,38 @@
 }
 
 @media (max-width: 860px) {
-  /* 이 값들은 EditorPage.css의 --sheet-sidebar-h / --sheet-property-h 와 맞춰져 있어야 한다 */
+  /* 이 값들은 EditorPage.css의 --sheet-sidebar-h 와 맞춰져 있어야 한다 */
   .mobile-sheet-handle {
     display: flex;
     flex-direction: column;
-    align-items: center;
-    gap: 6px;
     position: fixed;
     left: 0;
     right: 0;
     bottom: 0;
     z-index: 30;
-    padding: 8px 16px calc(8px + env(safe-area-inset-bottom, 0px));
     background: var(--surface);
-    border: none;
     border-top: 1px solid var(--border);
     border-radius: 14px 14px 0 0;
     font-family: var(--font-family);
-    cursor: pointer;
     transition: bottom .25s ease;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
   }
 
   .app-shell[data-mobile-sheet="open"] .mobile-sheet-handle {
-    bottom: calc(var(--sheet-sidebar-h) + var(--sheet-property-h));
+    bottom: var(--sheet-sidebar-h);
+  }
+
+  .mobile-sheet-handle-toggle {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    padding: 8px 16px;
+    background: none;
+    border: none;
+    font-family: var(--font-family);
+    cursor: pointer;
   }
 
   .mobile-sheet-handle-grip {
@@ -61,16 +70,6 @@
     white-space: nowrap;
   }
 
-  .mobile-sheet-handle-mode {
-    display: flex;
-    color: var(--primary);
-  }
-
-  .mobile-sheet-handle-mode .icon {
-    width: 16px;
-    height: 16px;
-  }
-
   .mobile-sheet-handle-chevron {
     color: var(--sub);
     transition: transform .25s ease;
@@ -78,5 +77,48 @@
 
   .mobile-sheet-handle-chevron.is-open {
     transform: rotate(180deg);
+  }
+
+  /* 접혀 있을 때 바로 보이는 미니 입력창 — 시트를 펼치지 않아도 도형을 그릴 수 있게 한다 */
+  .mobile-quick-form {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 12px 12px;
+  }
+
+  .mobile-quick-input {
+    flex: 1;
+    min-width: 0;
+    font-size: 13px;
+    padding: 8px 10px;
+  }
+
+  .mobile-quick-input-text {
+    flex: 2;
+  }
+
+  .mobile-quick-submit {
+    flex-shrink: 0;
+    width: 38px;
+    height: 38px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-sm);
+    border: 1.5px solid var(--primary);
+    background: var(--primary);
+    color: #fff;
+  }
+
+  .mobile-quick-submit:disabled {
+    border-color: var(--border);
+    background: transparent;
+    color: var(--sub);
+  }
+
+  .mobile-quick-submit .icon {
+    width: 18px;
+    height: 18px;
   }
 }

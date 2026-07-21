@@ -28,29 +28,24 @@ export default function PropertyPanel({
   onPasteShape,
   hasClipboard,
 }: PropertyPanelProps) {
-  const hasSelection = selectedShapes.length > 0;
   const single = selectedShapes.length === 1 ? selectedShapes[0] : null;
 
   return (
     <section className="panel property-panel">
       <div className="property-header">
         <h2 className="panel-title">
-          {single ? '선택한 객체' : selectedShapes.length > 1 ? `${selectedShapes.length}개 선택됨` : '속성'}
+          {single ? '선택한 객체' : `${selectedShapes.length}개 선택됨`}
         </h2>
         <div className="property-actions">
-          {hasSelection && (
-            <button type="button" className="property-action-btn" onClick={onCopySelected} aria-label="복사">
-              <IconCopy />
-            </button>
-          )}
+          <button type="button" className="property-action-btn" onClick={onCopySelected} aria-label="복사">
+            <IconCopy />
+          </button>
           <button type="button" className="property-action-btn" onClick={onPasteShape} disabled={!hasClipboard} aria-label="붙여넣기">
             <IconClipboard />
           </button>
-          {hasSelection && (
-            <button type="button" className="property-action-btn property-action-danger" onClick={onDeleteSelected} aria-label="삭제">
-              <IconTrash />
-            </button>
-          )}
+          <button type="button" className="property-action-btn property-action-danger" onClick={onDeleteSelected} aria-label="삭제">
+            <IconTrash />
+          </button>
           {single && <span className="property-id">{single.id}</span>}
         </div>
       </div>
@@ -65,13 +60,9 @@ export default function PropertyPanel({
         ) : (
           <TextFields key={single.id} shape={single} onUpdateText={onUpdateText} />
         )
-      ) : selectedShapes.length > 1 ? (
-        <p className="property-empty-text">
-          도형 {selectedShapes.length}개가 선택되었습니다. 드래그하면 함께 이동하고, 복사·삭제도 한번에 적용됩니다. 속성 수정은 하나만 선택했을 때 가능해요.
-        </p>
       ) : (
         <p className="property-empty-text">
-          캔버스에서 도형을 클릭하면 속성이 여기에 표시됩니다. 드래그로 이동(PC에서는 빈 곳에서 드래그해 여러 개 선택), Ctrl+C/Ctrl+V로 복사·붙여넣기, Delete로 삭제, Ctrl+Z로 실행 취소할 수 있어요.
+          도형 {selectedShapes.length}개가 선택되었습니다. 드래그하면 함께 이동하고, 복사·삭제도 한번에 적용됩니다. 속성 수정은 하나만 선택했을 때 가능해요.
         </p>
       )}
     </section>

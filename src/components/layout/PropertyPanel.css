@@ -1,10 +1,17 @@
+/* 캔버스 우상단에 뜨는 작은 팔레트 — 도형을 선택했을 때만 나타난다 */
 .property-panel {
-  grid-column: 1 / -1;
+  position: fixed;
+  top: 80px;
+  right: 16px;
+  width: 300px;
+  max-height: calc(100vh - 100px);
   flex-direction: column;
-  border-right: none;
-  border-top: 1px solid var(--border);
-  padding: var(--space-4) var(--space-5);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-4);
   gap: var(--space-3);
+  z-index: 15;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, .5);
 }
 
 .property-header {

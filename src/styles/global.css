@@ -61,10 +61,10 @@ a {
   text-decoration: none;
 }
 
-/* ============ 레이아웃: 2분할 + 하단 속성 패널 ============ */
+/* ============ 레이아웃: 2분할 (속성은 선택 시 캔버스 위에 뜨는 작은 팔레트) ============ */
 .app-shell {
   display: grid;
-  grid-template-rows: 64px 1fr 220px;
+  grid-template-rows: 64px 1fr;
   height: 100vh;
   background: var(--bg);
 }

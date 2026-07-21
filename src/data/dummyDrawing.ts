@@ -56,7 +56,7 @@ export const dummyShapes: Shape[] = [
 
 export const dummyLayers: Layer[] = [
   { id: LAYER_WALL, name: '벽체', category: 'wall', visible: true, color: LAYER_COLOR_PALETTE[0] },
-  { id: LAYER_BEAM, name: '보 (Beam)', category: 'beam', visible: true, color: LAYER_COLOR_PALETTE[1] },
-  { id: LAYER_COLUMN, name: '기둥 (Column)', category: 'column', visible: true, color: LAYER_COLOR_PALETTE[2] },
+  { id: LAYER_BEAM, name: '보', category: 'beam', visible: true, color: LAYER_COLOR_PALETTE[1] },
+  { id: LAYER_COLUMN, name: '기둥', category: 'column', visible: true, color: LAYER_COLOR_PALETTE[2] },
   { id: LAYER_SPRINKLER, name: '스프링클러', category: 'sprinkler', visible: true, color: LAYER_COLOR_PALETTE[3] },
 ];

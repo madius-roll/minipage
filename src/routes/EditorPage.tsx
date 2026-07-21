@@ -35,7 +35,13 @@ export default function EditorPage() {
   const [guideOpen, setGuideOpen] = useState(false);
   const [clipboard, setClipboard] = useState<Shape[]>([]);
   const [mobileSheetOpen, setMobileSheetOpen] = useState(false);
+  const [history, setHistory] = useState<Shape[][]>([]);
   const canvasRef = useRef<CadCanvasHandle>(null);
+
+  /** 도형을 바꾸는 동작 직전에 호출해 실행취소용 스냅샷을 쌓는다 (연속 드래그는 시작 시점에 한 번만) */
+  const pushHistory = () => {
+    setHistory((prev) => [...prev, shapes]);
+  };
 
   // 활성 레이어가 삭제/병합으로 사라지면 남은 첫 레이어로 대체 ("전체 레이어" 선택 상태는 예외)
   useEffect(() => {
@@ -84,6 +90,7 @@ export default function EditorPage() {
       : `"${layer?.name}" 레이어를 삭제할까요?`;
     if (!window.confirm(message)) return;
 
+    if (affected > 0) pushHistory();
     setLayers((prev) => prev.filter((l) => l.id !== id));
     setShapes((prev) => prev.filter((s) => s.layer !== id));
     setMergeSelection((prev) => prev.filter((x) => x !== id));
@@ -106,12 +113,14 @@ export default function EditorPage() {
   const confirmMerge = () => {
     if (mergeSelection.length !== 2) return;
     const [targetId, sourceId] = mergeSelection;
+    pushHistory();
     setShapes((prev) => prev.map((s) => (s.layer === sourceId ? { ...s, layer: targetId } : s)));
     setLayers((prev) => prev.filter((l) => l.id !== sourceId));
     cancelMerge();
   };
 
   const handleAddLine = (lengthMm: number, angleDeg: number, thicknessMm?: number) => {
+    pushHistory();
     const start = pendingPoint;
     const end = pointFromPolar(start, lengthMm, angleDeg);
     const id = genId('line');
@@ -121,38 +130,54 @@ export default function EditorPage() {
   };
 
   const handleAddCircle = (radiusMm: number) => {
+    pushHistory();
     const id = genId('circle');
     setShapes((prev) => [...prev, { id, layer: activeLayerId, kind: 'circle', center: pendingPoint, radiusMm }]);
     setSelectedIds([id]);
   };
 
   const handleAddRect = (widthMm: number, heightMm: number) => {
+    pushHistory();
     const id = genId('rect');
     setShapes((prev) => [...prev, { id, layer: activeLayerId, kind: 'rect', center: pendingPoint, widthMm, heightMm }]);
     setSelectedIds([id]);
   };
 
   const handleAddText = (text: string) => {
+    pushHistory();
     const id = genId('text');
     setShapes((prev) => [...prev, { id, layer: activeLayerId, kind: 'text', position: pendingPoint, text }]);
     setSelectedIds([id]);
   };
 
+  const handleDragStart = () => {
+    pushHistory();
+  };
+
+  const handleResetPending = () => {
+    setPendingPoint(ORIGIN);
+    canvasRef.current?.centerOnOrigin();
+  };
+
   const handleUndo = () => {
-    if (shapes.length <= dummyShapes.length) return;
-    setShapes((prev) => prev.slice(0, -1));
+    if (history.length === 0) return;
+    const previous = history[history.length - 1];
+    setShapes(previous);
+    setHistory((prev) => prev.slice(0, -1));
     setSelectedIds([]);
   };
 
   const handleClearAll = () => {
     if (shapes.length === 0) return;
     if (!window.confirm('캔버스의 모든 도형을 삭제합니다. 되돌릴 수 없어요. 계속할까요?')) return;
+    pushHistory();
     setShapes([]);
     setSelectedIds([]);
   };
 
   const handleDeleteSelected = () => {
     if (selectedIds.length === 0) return;
+    pushHistory();
     setShapes((prev) => prev.filter((s) => !selectedIds.includes(s.id)));
     setSelectedIds([]);
   };
@@ -162,6 +187,7 @@ export default function EditorPage() {
   };
 
   const handleUpdateLine = (id: string, lengthMm: number, angleDeg: number, thicknessMm?: number) => {
+    pushHistory();
     setShapes((prev) => prev.map((s) => {
       if (s.id !== id || s.kind !== 'line') return s;
       const end = pointFromPolar(s.start, lengthMm, angleDeg);
@@ -170,14 +196,17 @@ export default function EditorPage() {
   };
 
   const handleUpdateCircle = (id: string, radiusMm: number) => {
+    pushHistory();
     setShapes((prev) => prev.map((s) => (s.id === id && s.kind === 'circle' ? { ...s, radiusMm } : s)));
   };
 
   const handleUpdateRect = (id: string, widthMm: number, heightMm: number) => {
+    pushHistory();
     setShapes((prev) => prev.map((s) => (s.id === id && s.kind === 'rect' ? { ...s, widthMm, heightMm } : s)));
   };
 
   const handleUpdateText = (id: string, text: string) => {
+    pushHistory();
     setShapes((prev) => prev.map((s) => (s.id === id && s.kind === 'text' ? { ...s, text } : s)));
   };
 
@@ -189,6 +218,7 @@ export default function EditorPage() {
 
   const handlePasteShape = () => {
     if (clipboard.length === 0) return;
+    pushHistory();
     const pasted = clipboard.map((shape) => {
       const layerStillExists = layers.some((l) => l.id === shape.layer);
       return { ...translateShape(shape, PASTE_OFFSET, PASTE_OFFSET), id: genId(shape.kind), layer: layerStillExists ? shape.layer : activeLayerId };
@@ -253,12 +283,9 @@ export default function EditorPage() {
             onAddCircle={handleAddCircle}
             onAddRect={handleAddRect}
             onAddText={handleAddText}
-            onResetPending={() => {
-              setPendingPoint(ORIGIN);
-              canvasRef.current?.centerOnOrigin();
-            }}
+            onResetPending={handleResetPending}
             onUndo={handleUndo}
-            canUndo={shapes.length > dummyShapes.length}
+            canUndo={history.length > 0}
             onClearAll={handleClearAll}
             canClearAll={shapes.length > 0}
           />
@@ -290,25 +317,29 @@ export default function EditorPage() {
             mode={drawMode}
             onCanvasClick={setPendingPoint}
             onMoveShapes={handleMoveShapes}
+            onDragStart={handleDragStart}
             onUndo={handleUndo}
-            canUndo={shapes.length > dummyShapes.length}
+            canUndo={history.length > 0}
             activeLayerId={activeLayerId}
             onDeleteSelected={handleDeleteSelected}
+            onResetPending={handleResetPending}
           />
         </main>
       </div>
 
-      <PropertyPanel
-        selectedShapes={selectedShapes}
-        onUpdateLine={handleUpdateLine}
-        onUpdateCircle={handleUpdateCircle}
-        onUpdateRect={handleUpdateRect}
-        onUpdateText={handleUpdateText}
-        onDeleteSelected={handleDeleteSelected}
-        onCopySelected={handleCopySelected}
-        onPasteShape={handlePasteShape}
-        hasClipboard={clipboard.length > 0}
-      />
+      {selectedShapes.length > 0 && (
+        <PropertyPanel
+          selectedShapes={selectedShapes}
+          onUpdateLine={handleUpdateLine}
+          onUpdateCircle={handleUpdateCircle}
+          onUpdateRect={handleUpdateRect}
+          onUpdateText={handleUpdateText}
+          onDeleteSelected={handleDeleteSelected}
+          onCopySelected={handleCopySelected}
+          onPasteShape={handlePasteShape}
+          hasClipboard={clipboard.length > 0}
+        />
+      )}
 
       <MobileSheetHandle
         layerName={activeLayerLabel}

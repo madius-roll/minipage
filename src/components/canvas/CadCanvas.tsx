@@ -16,7 +16,7 @@ import {
 } from '../../utils/geometry';
 import { ALL_LAYERS_ID } from '../../data/layerMeta';
 import type { DrawMode } from '../layout/ToolPanel';
-import { IconFit, IconTrash, IconUndo, IconZoomIn, IconZoomOut } from '../ui/Icon';
+import { IconFit, IconTarget, IconTrash, IconUndo, IconZoomIn, IconZoomOut } from '../ui/Icon';
 import './CadCanvas.css';
 
 interface CadCanvasProps {
@@ -28,10 +28,13 @@ interface CadCanvasProps {
   mode: DrawMode;
   onCanvasClick: (point: Point) => void;
   onMoveShapes: (ids: string[], dx: number, dy: number) => void;
+  /** 도형을 잡아서 드래그를 막 시작하는 순간 한 번만 호출 — 실행취소 히스토리 저장용 */
+  onDragStart: () => void;
   onUndo: () => void;
   canUndo: boolean;
   activeLayerId: string;
   onDeleteSelected: () => void;
+  onResetPending: () => void;
 }
 
 export interface CadCanvasHandle {
@@ -72,11 +75,27 @@ interface PinchState {
 }
 
 const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas(
-  { shapes, layers, selectedIds, onSelect, pendingPoint, mode, onCanvasClick, onMoveShapes, onUndo, canUndo, activeLayerId, onDeleteSelected },
+  { shapes, layers, selectedIds, onSelect, pendingPoint, mode, onCanvasClick, onMoveShapes, onDragStart, onUndo, canUndo, activeLayerId, onDeleteSelected, onResetPending },
   ref,
 ) {
   const svgRef = useRef<SVGSVGElement>(null);
-  const dragRef = useRef<{ ids: string[]; lastMm: Point } | null>(null);
+  /**
+   * originalShapes/totalDx/totalDy: 드래그 시작 시점의 원본 위치 기준 "진짜" 누적 이동량.
+   * appliedDx/appliedDy: 지금까지 onMoveShapes로 실제 반영한 누적량(스냅 보정 포함).
+   * 이렇게 분리해야, 스냅으로 붙은 뒤 매 프레임 아주 조금씩 움직여도(실제 사람 손 드래그처럼)
+   * "진짜" 이동량은 계속 누적되어 결국 허용오차를 넘어서면서 정상적으로 떨어진다.
+   * (이전에는 매 프레임 델타를 이미 스냅 보정된 상태 위에 얹어 계산해서, 아주 조금씩 움직이면
+   * 매번 다시 같은 지점으로 붙어버려 영원히 분리되지 않는 버그가 있었다.)
+   */
+  const dragRef = useRef<{
+    ids: string[];
+    lastMm: Point;
+    originalShapes: Shape[];
+    totalDx: number;
+    totalDy: number;
+    appliedDx: number;
+    appliedDy: number;
+  } | null>(null);
   const dragSnappedRef = useRef(false);
   const marqueeRef = useRef<{ startMm: Point; moved: boolean } | null>(null);
   const panRef = useRef<{ startClientX: number; startClientY: number; startPan: Point } | null>(null);
@@ -114,13 +133,21 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
     return () => svg.removeEventListener('wheel', onWheelNative);
   }, []);
 
+  const centerOnOriginNow = () => {
+    // pendingPoint가 원점으로 리셋되는 것과 같은 타이밍에 호출되므로, 그 결과를 미리 반영한 경계로 계산한다.
+    const b = getBounds([...shapes, { id: '_pending', layer: '_pending', kind: 'circle', center: { x: 0, y: 0 }, radiusMm: 400 }]);
+    setPan({ x: -(b.minX + b.maxX) / 2, y: -(b.minY + b.maxY) / 2 });
+  };
+
   useImperativeHandle(ref, () => ({
-    centerOnOrigin: () => {
-      // pendingPoint가 원점으로 리셋되는 것과 같은 타이밍에 호출되므로, 그 결과를 미리 반영한 경계로 계산한다.
-      const b = getBounds([...shapes, { id: '_pending', layer: '_pending', kind: 'circle', center: { x: 0, y: 0 }, radiusMm: 400 }]);
-      setPan({ x: -(b.minX + b.maxX) / 2, y: -(b.minY + b.maxY) / 2 });
-    },
+    centerOnOrigin: centerOnOriginNow,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [shapes]);
+
+  const handleResetPendingClick = () => {
+    onResetPending();
+    centerOnOriginNow();
+  };
 
   const clientToMm = (clientX: number, clientY: number): Point | null => {
     const svg = svgRef.current;
@@ -140,12 +167,16 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
     return px / scale;
   };
 
-  /** 다른 도형들의 꼭짓점(선 끝점/원·사각형 중심) 목록 — 스냅 대상 */
+  /** 다른 도형들의 스냅 대상 점 — 선은 양 끝점 + 1/4·1/2·3/4 지점, 원·사각형·텍스트는 중심/위치 */
   const snapTargets = (excludeIds: string[]): Point[] => {
     const pts: Point[] = [];
     for (const s of visibleShapes) {
       if (excludeIds.includes(s.id)) continue;
-      pts.push(...getShapeVertices(s));
+      if (s.kind === 'line') {
+        pts.push(s.start, lerpPoint(s.start, s.end, 0.25), lerpPoint(s.start, s.end, 0.5), lerpPoint(s.start, s.end, 0.75), s.end);
+      } else {
+        pts.push(...getShapeVertices(s));
+      }
     }
     return pts;
   };
@@ -306,7 +337,16 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
       }
       onSelect(next);
       if (next.length > 0) {
-        dragRef.current = { ids: next, lastMm: mm };
+        onDragStart();
+        dragRef.current = {
+          ids: next,
+          lastMm: mm,
+          originalShapes: shapes.filter((s) => next.includes(s.id)),
+          totalDx: 0,
+          totalDy: 0,
+          appliedDx: 0,
+          appliedDy: 0,
+        };
         dragSnappedRef.current = false;
       }
       return;
@@ -370,22 +410,25 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
 
     const drag = dragRef.current;
     if (!drag) return;
-    const dx = mm.x - drag.lastMm.x;
-    const dy = mm.y - drag.lastMm.y;
-    if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+    const rawDx = mm.x - drag.lastMm.x;
+    const rawDy = mm.y - drag.lastMm.y;
+    if (Math.abs(rawDx) < 1 && Math.abs(rawDy) < 1) return;
+    drag.lastMm = mm;
+    // 원본 위치 기준 "진짜" 누적 이동량 — 스냅 보정과 무관하게 커서를 따라 계속 쌓인다.
+    drag.totalDx += rawDx;
+    drag.totalDy += rawDy;
 
     // 이동 중인 도형(들)의 꼭짓점이 다른 도형 꼭짓점 근처에 오면 정확히 맞춘다 (CAD 스냅)
-    const draggedShapes = shapes.filter((s) => drag.ids.includes(s.id));
     let snapDx = 0;
     let snapDy = 0;
     let snappedTo: Point | null = null;
-    if (draggedShapes.length > 0) {
+    if (drag.originalShapes.length > 0) {
       const targets = snapTargets(drag.ids);
       // 이미 스냅된 상태라면 더 작은 허용오차를 써서 살짝만 움직여도 빨리 떨어지게 한다.
       const tolerance = pxToMm(dragSnappedRef.current ? SNAP_RELEASE_TOLERANCE_PX : SNAP_TOLERANCE_PX);
       let bestDist = tolerance;
-      for (const shape of draggedShapes) {
-        const tentative = translateShape(shape, dx, dy);
+      for (const shape of drag.originalShapes) {
+        const tentative = translateShape(shape, drag.totalDx, drag.totalDy);
         for (const vertex of getShapeVertices(tentative)) {
           const nearest = findNearestVertex(vertex, targets, tolerance);
           if (nearest) {
@@ -401,8 +444,16 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
       }
     }
 
-    onMoveShapes(drag.ids, Math.round(dx + snapDx), Math.round(dy + snapDy));
-    drag.lastMm = mm;
+    // 지금까지 실제로 반영한 양(appliedDx/Dy)과의 차이만 이번 프레임에 내보낸다.
+    const finalDx = Math.round(drag.totalDx + snapDx);
+    const finalDy = Math.round(drag.totalDy + snapDy);
+    const outDx = finalDx - drag.appliedDx;
+    const outDy = finalDy - drag.appliedDy;
+    if (outDx !== 0 || outDy !== 0) {
+      onMoveShapes(drag.ids, outDx, outDy);
+      drag.appliedDx = finalDx;
+      drag.appliedDy = finalDy;
+    }
     dragSnappedRef.current = snappedTo !== null;
     setSnapMarker(snappedTo);
   };
@@ -615,6 +666,9 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
       <div className="cad-quick-actions">
         <button type="button" className="cad-zoom-btn" onClick={onUndo} disabled={!canUndo} aria-label="실행 취소">
           <IconUndo />
+        </button>
+        <button type="button" className="cad-zoom-btn" onClick={handleResetPendingClick} aria-label="원점으로">
+          <IconTarget />
         </button>
       </div>
 

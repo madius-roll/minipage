@@ -93,14 +93,14 @@
 }
 
 @media (max-width: 860px) {
-  /* 하단에 항상 떠 있는 모바일 시트 손잡이(약 64px)에 가리지 않도록 띄워준다 */
+  /* 하단에 항상 떠 있는 모바일 시트 손잡이 + 접힌 상태의 미니 입력폼(약 140px)에 가리지 않도록 띄워준다 */
   .cad-zoom-controls {
-    bottom: 76px;
+    bottom: calc(140px + env(safe-area-inset-bottom, 0px));
     padding: 5px;
   }
   .cad-quick-actions {
     left: 12px;
-    bottom: 76px;
+    bottom: calc(140px + env(safe-area-inset-bottom, 0px));
     padding: 5px;
   }
   .cad-zoom-btn {

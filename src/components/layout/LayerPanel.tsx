@@ -122,7 +122,9 @@ export default function LayerPanel({
               ) : (
                 <span className="layer-name">
                   {layer.name}
-                  <span className="layer-category-tag">{CATEGORY_LABELS[layer.category]}</span>
+                  {layer.name !== CATEGORY_LABELS[layer.category] && (
+                    <span className="layer-category-tag">{CATEGORY_LABELS[layer.category]}</span>
+                  )}
                   {isActive && <span className="layer-active-badge">그리는 중</span>}
                 </span>
               )}

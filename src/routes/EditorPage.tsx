@@ -5,6 +5,7 @@ import LayerPanel from '../components/layout/LayerPanel';
 import PropertyPanel from '../components/layout/PropertyPanel';
 import CadCanvas, { type CadCanvasHandle } from '../components/canvas/CadCanvas';
 import LawGuideModal from '../components/guide/LawGuideModal';
+import MobileSheetHandle from '../components/layout/MobileSheetHandle';
 import { dummyLayers, dummyShapes } from '../data/dummyDrawing';
 import { ALL_LAYERS_ID, LAYER_COLOR_PALETTE, MAX_LAYERS } from '../data/layerMeta';
 import type { Layer, LayerCategory, Point, Shape } from '../types/cad';
@@ -31,6 +32,7 @@ export default function EditorPage() {
   const [mergeSelection, setMergeSelection] = useState<string[]>([]);
   const [guideOpen, setGuideOpen] = useState(false);
   const [clipboard, setClipboard] = useState<Shape[]>([]);
+  const [mobileSheetOpen, setMobileSheetOpen] = useState(false);
   const canvasRef = useRef<CadCanvasHandle>(null);
 
   // 활성 레이어가 삭제/병합으로 사라지면 남은 첫 레이어로 대체 ("전체 레이어" 선택 상태는 예외)
@@ -40,6 +42,11 @@ export default function EditorPage() {
       setActiveLayerId(layers[0].id);
     }
   }, [layers, activeLayerId]);
+
+  // 모바일: 도형을 선택하면 속성을 바로 볼 수 있도록 하단 시트를 자동으로 펼친다 (PC에서는 시각적으로 영향 없음)
+  useEffect(() => {
+    if (selectedIds.length > 0) setMobileSheetOpen(true);
+  }, [selectedIds]);
 
   const handleActiveLayerChange = (id: string) => {
     setActiveLayerId(id);
@@ -216,9 +223,12 @@ export default function EditorPage() {
   }, [selectedIds, shapes, clipboard, guideOpen, layers, activeLayerId]);
 
   const selectedShapes = shapes.filter((s) => selectedIds.includes(s.id));
+  const activeLayer = layers.find((l) => l.id === activeLayerId);
+  const activeLayerLabel = activeLayerId === ALL_LAYERS_ID ? '전체 레이어' : (activeLayer?.name ?? '');
+  const activeLayerColor = activeLayerId === ALL_LAYERS_ID ? 'var(--sub)' : (activeLayer?.color ?? 'var(--sub)');
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" data-mobile-sheet={mobileSheetOpen ? 'open' : 'closed'}>
       <Header onOpenGuide={() => setGuideOpen(true)} />
 
       <div className="app-body">
@@ -288,6 +298,14 @@ export default function EditorPage() {
         onCopySelected={handleCopySelected}
         onPasteShape={handlePasteShape}
         hasClipboard={clipboard.length > 0}
+      />
+
+      <MobileSheetHandle
+        layerName={activeLayerLabel}
+        layerColor={activeLayerColor}
+        mode={drawMode}
+        open={mobileSheetOpen}
+        onToggle={() => setMobileSheetOpen((prev) => !prev)}
       />
 
       {guideOpen && <LawGuideModal onClose={() => setGuideOpen(false)} />}

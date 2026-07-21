@@ -88,14 +88,15 @@
   font-family: var(--font-family);
 }
 
-@media (max-width: 640px) {
+@media (max-width: 860px) {
+  /* 하단에 항상 떠 있는 모바일 시트 손잡이(약 64px)에 가리지 않도록 띄워준다 */
   .cad-zoom-controls {
-    bottom: 12px;
+    bottom: 76px;
     padding: 5px;
   }
   .cad-quick-actions {
     left: 12px;
-    bottom: 12px;
+    bottom: 76px;
     padding: 5px;
   }
   .cad-zoom-btn {

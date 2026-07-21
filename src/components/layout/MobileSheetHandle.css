@@ -1,0 +1,82 @@
+.mobile-sheet-handle {
+  display: none;
+}
+
+@media (max-width: 860px) {
+  /* 이 값들은 EditorPage.css의 --sheet-sidebar-h / --sheet-property-h 와 맞춰져 있어야 한다 */
+  .mobile-sheet-handle {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 30;
+    padding: 8px 16px calc(8px + env(safe-area-inset-bottom, 0px));
+    background: var(--surface);
+    border: none;
+    border-top: 1px solid var(--border);
+    border-radius: 14px 14px 0 0;
+    font-family: var(--font-family);
+    cursor: pointer;
+    transition: bottom .25s ease;
+  }
+
+  .app-shell[data-mobile-sheet="open"] .mobile-sheet-handle {
+    bottom: calc(var(--sheet-sidebar-h) + var(--sheet-property-h));
+  }
+
+  .mobile-sheet-handle-grip {
+    width: 36px;
+    height: 4px;
+    border-radius: 999px;
+    background: var(--border);
+  }
+
+  .mobile-sheet-handle-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    width: 100%;
+  }
+
+  .mobile-sheet-handle-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .mobile-sheet-handle-label {
+    flex: 1;
+    min-width: 0;
+    text-align: left;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mobile-sheet-handle-mode {
+    display: flex;
+    color: var(--primary);
+  }
+
+  .mobile-sheet-handle-mode .icon {
+    width: 16px;
+    height: 16px;
+  }
+
+  .mobile-sheet-handle-chevron {
+    color: var(--sub);
+    transition: transform .25s ease;
+  }
+
+  .mobile-sheet-handle-chevron.is-open {
+    transform: rotate(180deg);
+  }
+}

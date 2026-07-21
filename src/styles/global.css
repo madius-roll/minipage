@@ -77,12 +77,15 @@ a {
 }
 
 @media (max-width: 860px) {
+  /* 모바일: 캔버스가 화면 전체를 채우고, 그리기 도구/레이어/속성은 하단 시트로 그 위에 뜬다 */
   .app-shell {
-    grid-template-rows: 56px 1fr 200px;
+    grid-template-rows: 56px 1fr;
+    --sheet-sidebar-h: 40vh;
+    --sheet-property-h: 34vh;
   }
   .app-body {
-    grid-template-columns: 1fr;
-    grid-template-rows: auto 1fr;
+    display: block;
+    height: 100%;
     min-height: 0;
   }
 }

@@ -197,6 +197,14 @@ export function IconText({ className = '' }: IconProps) {
   );
 }
 
+export function IconChevronUp({ className = '' }: IconProps) {
+  return (
+    <svg className={`${base} ${className}`} viewBox="0 0 24 24">
+      <polyline points="5,15 12,8 19,15" />
+    </svg>
+  );
+}
+
 export function IconMerge({ className = '' }: IconProps) {
   return (
     <svg className={`${base} ${className}`} viewBox="0 0 24 24">

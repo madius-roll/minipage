@@ -1,0 +1,96 @@
+.tool-mode-switch {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.tool-mode-switch .btn {
+  flex: 1;
+  justify-content: center;
+}
+
+/* 선 그리기 / 도형 그리기 / 텍스트 3분할 — 좁은 사이드바에서도 안 잘리도록 아이콘을 위, 라벨을 아래로 쌓는다 */
+.tool-mode-switch-draw {
+  gap: 6px;
+}
+
+.tool-mode-switch-draw .btn {
+  flex-direction: column;
+  gap: 4px;
+  padding: 9px 2px;
+  font-size: 11px;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.tool-mode-switch-draw .btn .icon {
+  width: 17px;
+  height: 17px;
+}
+
+.tool-all-layers-hint {
+  margin: -2px 0 0;
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-raised);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  line-height: 1.5;
+}
+
+.tool-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border);
+}
+
+.tool-submit {
+  justify-content: center;
+  width: 100%;
+}
+
+.tool-pending-point {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.tool-pending-reset {
+  background: none;
+  border: none;
+  color: var(--primary);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+}
+
+.tool-hint {
+  margin: -6px 0 0;
+  font-size: 11.5px;
+  color: var(--sub);
+}
+
+.tool-session-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+.tool-undo,
+.tool-clear-all {
+  justify-content: center;
+  width: 100%;
+}
+
+.tool-clear-all:not(:disabled):hover {
+  border-color: var(--danger);
+  background: var(--danger);
+  color: #fff;
+}

@@ -1,0 +1,78 @@
+.property-panel {
+  grid-column: 1 / -1;
+  flex-direction: column;
+  border-right: none;
+  border-top: 1px solid var(--border);
+  padding: var(--space-4) var(--space-5);
+  gap: var(--space-3);
+}
+
+.property-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.property-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.property-action-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  cursor: pointer;
+  padding: 6px;
+  display: flex;
+}
+
+.property-action-btn:hover:not(:disabled) {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.property-action-btn:disabled {
+  opacity: .35;
+  cursor: not-allowed;
+}
+
+.property-action-danger:hover:not(:disabled) {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.property-action-btn .icon {
+  width: 15px;
+  height: 15px;
+}
+
+.property-id {
+  font-size: 11px;
+  color: var(--sub);
+  background: var(--bg);
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+}
+
+.property-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: var(--space-4);
+}
+
+.property-static {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.property-empty-text {
+  margin: 0;
+  color: var(--sub);
+  font-size: 13px;
+}

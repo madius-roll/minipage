@@ -1,0 +1,29 @@
+.editor-sidebar {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  overflow-y: auto;
+}
+
+.editor-canvas-area {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+
+@media (max-width: 860px) {
+  .editor-sidebar {
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+    height: auto;
+    max-height: 40vh;
+  }
+  .editor-sidebar .panel {
+    min-width: 240px;
+    max-height: 40vh;
+    border-right: 1px solid var(--border);
+    border-bottom: none;
+  }
+}

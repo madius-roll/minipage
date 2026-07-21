@@ -1,0 +1,88 @@
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--font-family);
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3 {
+  font-weight: 700;
+  margin: 0;
+}
+
+p, span, label, input, select, textarea {
+  font-family: var(--font-family);
+}
+
+input, select {
+  background: var(--bg);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  padding: 8px 10px;
+  font-size: 13px;
+  outline: none;
+  transition: .15s;
+}
+input:focus, select:focus {
+  border-color: var(--primary);
+}
+label {
+  font-size: 12px;
+  color: var(--sub);
+  font-weight: 500;
+}
+
+/* 스크롤바 (다크 테마) */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+}
+
+a {
+  color: var(--primary);
+  text-decoration: none;
+}
+
+/* ============ 레이아웃: 2분할 + 하단 속성 패널 ============ */
+.app-shell {
+  display: grid;
+  grid-template-rows: 64px 1fr 220px;
+  height: 100vh;
+  background: var(--bg);
+}
+
+.app-body {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  min-height: 0;
+  height: 100%;
+}
+
+@media (max-width: 860px) {
+  .app-shell {
+    grid-template-rows: 56px 1fr 200px;
+  }
+  .app-body {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+    min-height: 0;
+  }
+}

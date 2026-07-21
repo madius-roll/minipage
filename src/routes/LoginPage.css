@@ -1,0 +1,110 @@
+.login-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+  padding: var(--space-4);
+}
+
+.login-card {
+  width: 100%;
+  max-width: 380px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.login-brand {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.login-logo {
+  font-size: 32px;
+}
+
+.login-brand h1 {
+  font-size: 18px;
+  color: var(--text);
+}
+
+.login-brand p {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--sub);
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.login-submit {
+  justify-content: center;
+  width: 100%;
+  margin-top: var(--space-1);
+}
+
+.login-divider {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--sub);
+  font-size: 12px;
+}
+
+.login-divider::before,
+.login-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.google-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  background: #fff;
+  color: #1f1f1f;
+  border: 1px solid #dadce0;
+  border-radius: var(--radius);
+  padding: 11px 19px;
+  font-family: var(--font-family);
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  transition: .15s;
+}
+
+.google-btn:hover {
+  box-shadow: 0 1px 6px rgba(0, 0, 0, .25);
+}
+
+.google-icon {
+  width: 18px;
+  height: 18px;
+}
+
+.login-note {
+  margin: 0;
+  text-align: center;
+  font-size: 11px;
+  color: var(--sub);
+  line-height: 1.6;
+}
+
+.login-note strong {
+  color: var(--primary);
+}

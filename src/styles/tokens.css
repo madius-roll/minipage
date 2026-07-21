@@ -1,0 +1,95 @@
+/* ============================================
+   디자인 시스템 토큰 — 색: 스포티파이 · 네온 그린
+   ============================================ */
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap');
+
+:root {
+  /* 색 */
+  --primary: #1DB954;
+  --primary-hover: #1ed760;
+  --text: #FFFFFF;
+  --sub: #B3B3B3;
+  --bg: #121212;
+  --surface: #181818;
+  --surface-raised: #202020;
+  --border: #2A2A2A;
+  --danger: #F15E5E;
+
+  /* 레이어 색상 (건축 구조 레이어 구분용) */
+  --layer-wall: #B3B3B3;
+  --layer-beam: #FFB020;
+  --layer-column: #4FA8FF;
+  --layer-sprinkler: #1DB954;
+
+  /* 폰트 */
+  --font-family: 'Poppins', sans-serif;
+
+  /* 형태 */
+  --radius: 10px;
+  --radius-sm: 6px;
+
+  /* 간격 */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+}
+
+/* 버튼 — 외곽선 */
+.btn {
+  font-family: var(--font-family);
+  border-radius: var(--radius);
+  padding: 11px 19px;
+  font-weight: 700;
+  font-size: 14px;
+  background: transparent;
+  color: var(--primary);
+  border: 1.5px solid var(--primary);
+  cursor: pointer;
+  transition: .15s;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  white-space: nowrap;
+}
+.btn:hover {
+  background: var(--primary);
+  color: #fff;
+}
+.btn:disabled {
+  opacity: .4;
+  cursor: not-allowed;
+  background: transparent;
+  color: var(--sub);
+  border-color: var(--border);
+}
+.btn-sm {
+  padding: 7px 12px;
+  font-size: 13px;
+  border-radius: var(--radius-sm);
+}
+.btn-ghost {
+  border-color: var(--border);
+  color: var(--text);
+}
+.btn-ghost:hover {
+  background: var(--surface-raised);
+  color: var(--text);
+}
+.btn-active {
+  background: var(--primary);
+  color: #fff;
+}
+
+/* 아이콘 — 둥근 라인 */
+.icon {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  flex-shrink: 0;
+}

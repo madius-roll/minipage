@@ -93,14 +93,19 @@
 }
 
 @media (max-width: 860px) {
-  /* 하단에 항상 떠 있는 모바일 시트 손잡이 + 접힌 상태의 미니 입력폼(약 140px)에 가리지 않도록 띄워준다 */
+  /* 하단에 항상 떠 있는 모바일 시트 손잡이 + 접힌 상태의 미니 입력폼에 가리지 않도록 띄워준다.
+     기준 140px에서, 버튼 그룹 세로 길이(약 45px)의 80%(약 36px)만큼 아래로 내려 104px로 둔다. */
+  /* 실행취소/원점 버튼(좌측)은 그대로 두고, 확대/축소 버튼 모음은 가운데 대신 우측으로 정렬 */
   .cad-zoom-controls {
-    bottom: calc(140px + env(safe-area-inset-bottom, 0px));
+    left: auto;
+    right: 12px;
+    transform: none;
+    bottom: calc(104px + env(safe-area-inset-bottom, 0px));
     padding: 5px;
   }
   .cad-quick-actions {
     left: 12px;
-    bottom: calc(140px + env(safe-area-inset-bottom, 0px));
+    bottom: calc(104px + env(safe-area-inset-bottom, 0px));
     padding: 5px;
   }
   .cad-zoom-btn {

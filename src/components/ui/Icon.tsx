@@ -218,6 +218,18 @@ export function IconTarget({ className = '' }: IconProps) {
   );
 }
 
+export function IconTrim({ className = '' }: IconProps) {
+  return (
+    <svg className={`${base} ${className}`} viewBox="0 0 24 24">
+      <line x1="4" y1="4" x2="10" y2="10" />
+      <line x1="14" y1="14" x2="20" y2="20" />
+      <line x1="20" y1="4" x2="14" y2="10" />
+      <line x1="10" y1="14" x2="4" y2="20" />
+      <circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
 export function IconMerge({ className = '' }: IconProps) {
   return (
     <svg className={`${base} ${className}`} viewBox="0 0 24 24">

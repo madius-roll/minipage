@@ -24,6 +24,37 @@
     bottom: var(--sheet-sidebar-h);
   }
 
+  /* 선그리기/도형그리기/텍스트 모드 전환 — 시트를 열지 않아도 손잡이 바로 위에서 언제든 바꿀 수 있다 */
+  .mobile-mode-switch {
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+    padding: 10px 12px 0;
+  }
+
+  .mobile-mode-btn {
+    width: 34px;
+    height: 34px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-sm);
+    border: 1.5px solid var(--border);
+    background: transparent;
+    color: var(--sub);
+  }
+
+  .mobile-mode-btn.is-active {
+    border-color: var(--primary);
+    color: var(--primary);
+    background: rgba(29, 185, 84, 0.12);
+  }
+
+  .mobile-mode-btn .icon {
+    width: 17px;
+    height: 17px;
+  }
+
   .mobile-sheet-handle-toggle {
     display: flex;
     flex-direction: column;

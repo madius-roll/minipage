@@ -83,7 +83,7 @@ function LineFields({ shape, onUpdateLine }: { shape: LineShape; onUpdateLine: P
     const l = parseFloat(length);
     const a = parseFloat(angle);
     const t = parseFloat(thickness);
-    if (!Number.isFinite(l) || l <= 0 || !Number.isFinite(a)) return;
+    if (!Number.isFinite(l) || l === 0 || !Number.isFinite(a)) return;
     onUpdateLine(shape.id, l, a, hasThickness && Number.isFinite(t) && t > 0 ? t : undefined);
   };
 
@@ -95,7 +95,7 @@ function LineFields({ shape, onUpdateLine }: { shape: LineShape; onUpdateLine: P
       </div>
       <div className="field">
         <label htmlFor="edit-length">길이 (mm)</label>
-        <input id="edit-length" type="number" min="1" value={length} onChange={(e) => setLength(e.target.value)} onBlur={commit} onKeyDown={commitOnEnter} />
+        <input id="edit-length" type="number" value={length} onChange={(e) => setLength(e.target.value)} onBlur={commit} onKeyDown={commitOnEnter} />
       </div>
       <div className="field">
         <label htmlFor="edit-angle">각도 (°)</label>

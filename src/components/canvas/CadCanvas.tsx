@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
-import type { Layer, Point, Shape } from '../../types/cad';
+import type { Layer, LineShape, Point, Shape } from '../../types/cad';
 import {
   boundsIntersect,
   distanceToSegment,
@@ -13,10 +13,11 @@ import {
   nearestPointOnCircle,
   pointFromPolar,
   translateShape,
+  trimLineAtPoint,
 } from '../../utils/geometry';
 import { ALL_LAYERS_ID } from '../../data/layerMeta';
 import type { DrawMode } from '../layout/ToolPanel';
-import { IconFit, IconTarget, IconTrash, IconUndo, IconZoomIn, IconZoomOut } from '../ui/Icon';
+import { IconFit, IconTarget, IconTrash, IconTrim, IconUndo, IconZoomIn, IconZoomOut } from '../ui/Icon';
 import './CadCanvas.css';
 
 interface CadCanvasProps {
@@ -35,6 +36,8 @@ interface CadCanvasProps {
   activeLayerId: string;
   onDeleteSelected: () => void;
   onResetPending: () => void;
+  /** TR(트림): removedId 선을 지우고 kept 조각들로 대체 */
+  onTrimLine: (removedId: string, kept: LineShape[]) => void;
 }
 
 export interface CadCanvasHandle {
@@ -75,10 +78,12 @@ interface PinchState {
 }
 
 const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas(
-  { shapes, layers, selectedIds, onSelect, pendingPoint, mode, onCanvasClick, onMoveShapes, onDragStart, onUndo, canUndo, activeLayerId, onDeleteSelected, onResetPending },
+  { shapes, layers, selectedIds, onSelect, pendingPoint, mode, onCanvasClick, onMoveShapes, onDragStart, onUndo, canUndo, activeLayerId, onDeleteSelected, onResetPending, onTrimLine },
   ref,
 ) {
   const svgRef = useRef<SVGSVGElement>(null);
+  /** TR(트림) 모드: 켜져 있는 동안은 클릭이 선택/그리기 대신 "겹치는 지점의 선분 잘라내기"로 동작한다 */
+  const [trimMode, setTrimMode] = useState(false);
   /**
    * originalShapes/totalDx/totalDy: 드래그 시작 시점의 원본 위치 기준 "진짜" 누적 이동량.
    * appliedDx/appliedDy: 지금까지 onMoveShapes로 실제 반영한 누적량(스냅 보정 포함).
@@ -110,15 +115,31 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
   /** 클릭/드래그로 선택 가능한 도형 — "그릴 레이어"로 선택된 레이어의 도형만 (다른 레이어는 보이되 선택은 안 됨) */
   const selectableShapes = activeLayerId === ALL_LAYERS_ID ? visibleShapes : visibleShapes.filter((s) => s.layer === activeLayerId);
 
-  const bounds = useMemo(() => getBounds([...shapes, { id: '_pending', layer: '_pending', kind: 'circle', center: pendingPoint, radiusMm: 400 }]), [shapes, pendingPoint]);
-  const padding = 800;
-  const { minX, minY, maxX, maxY } = bounds;
-  const baseWidth = maxX - minX + padding * 2;
-  const baseHeight = maxY - minY + padding * 2;
+  /**
+   * 뷰포트의 기준 크기/중심은 도형이 이동·추가될 때마다 다시 계산하지 않고 한 번 고정해 둔다.
+   * (예전에는 매 렌더마다 전체 도형의 바운딩박스로 다시 맞췄는데, 그러면 도형을 멀리 드래그할 때마다
+   * 바운딩박스가 커지면서 화면 비율(줌)이 저절로 축소되어 보이는 문제가 있었다.)
+   * "화면 맞춤" 버튼을 눌렀을 때만 명시적으로 현재 도형 기준으로 다시 계산한다.
+   */
+  const computeBaseView = (shapesArg: Shape[], pendingArg: Point) => {
+    const b = getBounds([...shapesArg, { id: '_pending', layer: '_pending', kind: 'circle', center: pendingArg, radiusMm: 400 }]);
+    const padding = 800;
+    return {
+      width: b.maxX - b.minX + padding * 2,
+      height: b.maxY - b.minY + padding * 2,
+      centerX: (b.minX + b.maxX) / 2,
+      centerY: (b.minY + b.maxY) / 2,
+    };
+  };
+  const baseViewRef = useRef<{ width: number; height: number; centerX: number; centerY: number } | null>(null);
+  if (!baseViewRef.current) {
+    baseViewRef.current = computeBaseView(shapes, pendingPoint);
+  }
+  const { width: baseWidth, height: baseHeight, centerX: baseCenterX, centerY: baseCenterY } = baseViewRef.current;
   const viewWidth = baseWidth / zoom;
   const viewHeight = baseHeight / zoom;
-  const centerX = (minX + maxX) / 2 + pan.x;
-  const centerY = (minY + maxY) / 2 + pan.y;
+  const centerX = baseCenterX + pan.x;
+  const centerY = baseCenterY + pan.y;
   const viewBox = `${centerX - viewWidth / 2} ${centerY - viewHeight / 2} ${viewWidth} ${viewHeight}`;
 
   useEffect(() => {
@@ -134,15 +155,14 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
   }, []);
 
   const centerOnOriginNow = () => {
-    // pendingPoint가 원점으로 리셋되는 것과 같은 타이밍에 호출되므로, 그 결과를 미리 반영한 경계로 계산한다.
-    const b = getBounds([...shapes, { id: '_pending', layer: '_pending', kind: 'circle', center: { x: 0, y: 0 }, radiusMm: 400 }]);
-    setPan({ x: -(b.minX + b.maxX) / 2, y: -(b.minY + b.maxY) / 2 });
+    const { centerX: base, centerY: baseY } = baseViewRef.current!;
+    setPan({ x: -base, y: -baseY });
   };
 
   useImperativeHandle(ref, () => ({
     centerOnOrigin: centerOnOriginNow,
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [shapes]);
+  }), []);
 
   const handleResetPendingClick = () => {
     onResetPending();
@@ -285,6 +305,22 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
     return selectableShapes.filter((s) => boundsIntersect(rectBounds, getShapeBounds(s))).map((s) => s.id);
   };
 
+  /** TR 모드 전용: 레이어 구분 없이(활성 레이어 제한 무시) 클릭 지점에서 가장 가까운 선을 찾는다 */
+  const findNearestTrimLine = (mm: Point, tolerance: number): LineShape | null => {
+    let best: LineShape | null = null;
+    let bestDist = Infinity;
+    for (const s of visibleShapes) {
+      if (s.kind !== 'line') continue;
+      const thickness = s.thicknessMm ?? DEFAULT_LINE_THICKNESS;
+      const dist = distanceToSegment(mm, s.start, s.end);
+      if (dist <= thickness / 2 + tolerance && dist < bestDist) {
+        bestDist = dist;
+        best = s;
+      }
+    }
+    return best;
+  };
+
   const handlePointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
     const mm = clientToMm(e.clientX, e.clientY);
     if (!mm) return;
@@ -313,6 +349,16 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
         };
         return;
       }
+    }
+
+    // TR(트림) 모드: 다른 도형과 겹치거나 가로지르는 지점을 클릭하면 그 구간만 잘라낸다. 선택/그리기는 하지 않는다.
+    if (trimMode) {
+      const line = findNearestTrimLine(mm, pxToMm(CLICK_TOLERANCE_PX));
+      if (line) {
+        const result = trimLineAtPoint(line, mm, visibleShapes);
+        if (result) onTrimLine(result.removedId, result.kept);
+      }
+      return;
     }
 
     // 선분의 중점/사분점을 정확히 겨냥해 클릭하면, 그 지점이 선 위라도 선택보다 배치를 우선한다.
@@ -533,7 +579,7 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
                   strokeLinecap="round"
                 />
                 <text x={labelX} y={labelY} textAnchor="middle" className="cad-dim-label">
-                  {formatMeters(shape.lengthMm)}
+                  {formatMeters(Math.abs(shape.lengthMm))}
                 </text>
                 {[0, 0.25, 0.5, 0.75, 1].map((t) => {
                   const p = lerpPoint(shape.start, shape.end, t);
@@ -670,6 +716,15 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
         <button type="button" className="cad-zoom-btn" onClick={handleResetPendingClick} aria-label="원점으로">
           <IconTarget />
         </button>
+        <button
+          type="button"
+          className={`cad-zoom-btn ${trimMode ? 'cad-zoom-btn-active' : ''}`}
+          onClick={() => { setTrimMode((v) => !v); onSelect([]); }}
+          aria-pressed={trimMode}
+          aria-label="TR (겹치는 선 잘라내기)"
+        >
+          <IconTrim />
+        </button>
       </div>
 
       <div className="cad-zoom-controls">
@@ -680,7 +735,16 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
         <button type="button" className="cad-zoom-btn" onClick={() => setZoom((z) => clamp(z * BUTTON_ZOOM_STEP, MIN_ZOOM, MAX_ZOOM))} aria-label="확대">
           <IconZoomIn />
         </button>
-        <button type="button" className="cad-zoom-btn" onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }} aria-label="화면 맞춤">
+        <button
+          type="button"
+          className="cad-zoom-btn"
+          onClick={() => {
+            baseViewRef.current = computeBaseView(shapes, pendingPoint);
+            setZoom(1);
+            setPan({ x: 0, y: 0 });
+          }}
+          aria-label="화면 맞춤"
+        >
           <IconFit />
         </button>
       </div>

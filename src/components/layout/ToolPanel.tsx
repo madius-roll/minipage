@@ -86,7 +86,7 @@ export default function ToolPanel({
   const width = parseFloat(widthMm);
   const height = parseFloat(heightMm);
 
-  const lineValid = Number.isFinite(length) && length > 0 && Number.isFinite(angle) && (!isBeam || (Number.isFinite(thickness) && thickness > 0));
+  const lineValid = Number.isFinite(length) && length !== 0 && Number.isFinite(angle) && (!isBeam || (Number.isFinite(thickness) && thickness > 0));
   const circleValid = Number.isFinite(radius) && radius > 0;
   const rectValid = Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0;
   const textValid = textValue.trim().length > 0;
@@ -187,7 +187,7 @@ export default function ToolPanel({
         <form className="tool-form" onSubmit={handleSubmitLine}>
           <div className="field">
             <label htmlFor="length">길이 (mm)</label>
-            <input id="length" type="number" min="1" placeholder="예: 3000" value={lengthMm} onChange={(e) => onDrawFormChange({ lengthMm: e.target.value })} />
+            <input id="length" type="number" placeholder="예: 3000 (음수면 반대 방향)" value={lengthMm} onChange={(e) => onDrawFormChange({ lengthMm: e.target.value })} />
           </div>
           <div className="field">
             <label htmlFor="angle">각도 (°)</label>

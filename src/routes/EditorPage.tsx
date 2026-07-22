@@ -9,7 +9,7 @@ import MobileSheetHandle from '../components/layout/MobileSheetHandle';
 import MobileLayerStrip from '../components/layout/MobileLayerStrip';
 import { dummyLayers, dummyShapes } from '../data/dummyDrawing';
 import { ALL_LAYERS_ID, LAYER_COLOR_PALETTE, MAX_LAYERS } from '../data/layerMeta';
-import type { Layer, LayerCategory, Point, Shape } from '../types/cad';
+import type { Layer, LayerCategory, LineShape, Point, Shape } from '../types/cad';
 import { genId, pointFromPolar, translateShape } from '../utils/geometry';
 import './EditorPage.css';
 
@@ -186,6 +186,12 @@ export default function EditorPage() {
     setShapes((prev) => prev.map((s) => (ids.includes(s.id) ? translateShape(s, dx, dy) : s)));
   };
 
+  const handleTrimLine = (removedId: string, kept: LineShape[]) => {
+    pushHistory();
+    setShapes((prev) => [...prev.filter((s) => s.id !== removedId), ...kept]);
+    setSelectedIds([]);
+  };
+
   const handleUpdateLine = (id: string, lengthMm: number, angleDeg: number, thicknessMm?: number) => {
     pushHistory();
     setShapes((prev) => prev.map((s) => {
@@ -323,6 +329,7 @@ export default function EditorPage() {
             activeLayerId={activeLayerId}
             onDeleteSelected={handleDeleteSelected}
             onResetPending={handleResetPending}
+            onTrimLine={handleTrimLine}
           />
         </main>
       </div>
@@ -345,6 +352,7 @@ export default function EditorPage() {
         layerName={activeLayerLabel}
         layerColor={activeLayerColor}
         mode={drawMode}
+        onModeChange={setDrawMode}
         isDrawable={activeLayerId !== ALL_LAYERS_ID}
         isBeam={activeLayer?.category === 'beam'}
         drawForm={drawForm}
@@ -352,6 +360,10 @@ export default function EditorPage() {
         onAddLine={handleAddLine}
         onAddCircle={handleAddCircle}
         onAddText={handleAddText}
+        selectedShape={selectedShapes.length === 1 ? selectedShapes[0] : null}
+        onUpdateLine={handleUpdateLine}
+        onUpdateCircle={handleUpdateCircle}
+        onUpdateRect={handleUpdateRect}
         open={mobileSheetOpen}
         onToggle={() => setMobileSheetOpen((prev) => !prev)}
       />

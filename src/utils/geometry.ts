@@ -1,4 +1,4 @@
-import type { Point, Shape } from '../types/cad';
+import type { LineShape, Point, Shape } from '../types/cad';
 
 /**
  * 시작점 기준 길이(mm)와 각도(도, 0°=오른쪽·반시계 방향 증가)로
@@ -169,4 +169,133 @@ let idCounter = 0;
 export function genId(prefix: string): string {
   idCounter += 1;
   return `${prefix}-${Date.now()}-${idCounter}`;
+}
+
+const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
+
+/** 두 선분(a1-a2, b1-b2)의 교차점. 끝점 포함, 평행/겹침은 교차점이 무한하므로 무시(null)한다. */
+export function segmentIntersection(a1: Point, a2: Point, b1: Point, b2: Point): Point | null {
+  const d1x = a2.x - a1.x;
+  const d1y = a2.y - a1.y;
+  const d2x = b2.x - b1.x;
+  const d2y = b2.y - b1.y;
+  const denom = d1x * d2y - d1y * d2x;
+  if (Math.abs(denom) < 1e-9) return null;
+  const t = ((b1.x - a1.x) * d2y - (b1.y - a1.y) * d2x) / denom;
+  const u = ((b1.x - a1.x) * d1y - (b1.y - a1.y) * d1x) / denom;
+  if (t < 0 || t > 1 || u < 0 || u > 1) return null;
+  return { x: a1.x + t * d1x, y: a1.y + t * d1y };
+}
+
+/** 선분과 원 둘레의 교차점 (0~2개) */
+export function segmentCircleIntersections(a: Point, b: Point, center: Point, radius: number): Point[] {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const fx = a.x - center.x;
+  const fy = a.y - center.y;
+  const A = dx * dx + dy * dy;
+  if (A === 0) return [];
+  const B = 2 * (fx * dx + fy * dy);
+  const C = fx * fx + fy * fy - radius * radius;
+  const disc = B * B - 4 * A * C;
+  if (disc < 0) return [];
+  const sqrtDisc = Math.sqrt(disc);
+  const pts: Point[] = [];
+  for (const t of [(-B - sqrtDisc) / (2 * A), (-B + sqrtDisc) / (2 * A)]) {
+    if (t >= 0 && t <= 1) pts.push({ x: a.x + t * dx, y: a.y + t * dy });
+  }
+  return pts;
+}
+
+/** 선분과 축정렬 사각형(중심+가로/세로) 네 변의 교차점 */
+export function segmentRectIntersections(a: Point, b: Point, center: Point, widthMm: number, heightMm: number): Point[] {
+  const hw = widthMm / 2;
+  const hh = heightMm / 2;
+  const corners: Point[] = [
+    { x: center.x - hw, y: center.y - hh },
+    { x: center.x + hw, y: center.y - hh },
+    { x: center.x + hw, y: center.y + hh },
+    { x: center.x - hw, y: center.y + hh },
+  ];
+  const pts: Point[] = [];
+  for (let i = 0; i < 4; i++) {
+    const p = segmentIntersection(a, b, corners[i], corners[(i + 1) % 4]);
+    if (p) pts.push(p);
+  }
+  return pts;
+}
+
+/** line이 다른 도형들과 교차하는 지점들을 line.start~end 기준 매개변수 t(0~1)로, 0과 1을 포함해 오름차순 반환 */
+export function getLineCutParams(line: LineShape, others: Shape[]): number[] {
+  const { start, end } = line;
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const lenSq = dx * dx + dy * dy;
+  const toT = (p: Point) => (lenSq === 0 ? 0 : ((p.x - start.x) * dx + (p.y - start.y) * dy) / lenSq);
+
+  const ts = new Set<number>([0, 1]);
+  for (const other of others) {
+    if (other.id === line.id) continue;
+    if (other.kind === 'line') {
+      const p = segmentIntersection(start, end, other.start, other.end);
+      if (p) ts.add(clamp01(toT(p)));
+    } else if (other.kind === 'circle') {
+      for (const p of segmentCircleIntersections(start, end, other.center, other.radiusMm)) ts.add(clamp01(toT(p)));
+    } else if (other.kind === 'rect') {
+      for (const p of segmentRectIntersections(start, end, other.center, other.widthMm, other.heightMm)) ts.add(clamp01(toT(p)));
+    }
+  }
+  return Array.from(ts).sort((x, y) => x - y);
+}
+
+function buildLinePiece(original: LineShape, s: Point, e: Point): LineShape {
+  const lengthMm = Math.round(distanceMm(s, e));
+  const angleDeg = Math.round((Math.atan2(-(e.y - s.y), e.x - s.x) * 180) / Math.PI * 100) / 100;
+  return { ...original, id: genId('line'), start: s, end: e, lengthMm, angleDeg };
+}
+
+export interface TrimResult {
+  removedId: string;
+  kept: LineShape[];
+}
+
+/** 최소 조각 길이(mm) — 이보다 짧게 남는 조각은 버린다(부동소수점 오차로 생기는 0에 가까운 조각 방지) */
+const TRIM_MIN_PIECE_MM = 10;
+
+/**
+ * clickPoint 근처의 line을, 다른 도형들과의 교차 지점을 기준으로 트림한다.
+ * 클릭 지점을 감싸는 두 교차 지점 사이의 구간만 제거하고 나머지는 그대로 둔다.
+ * 교차점이 없거나(자를 게 없음) 클릭 지점이 교차점과 거의 겹치면 null을 반환한다.
+ */
+export function trimLineAtPoint(line: LineShape, clickPoint: Point, others: Shape[]): TrimResult | null {
+  const ts = getLineCutParams(line, others);
+  if (ts.length <= 2) return null;
+
+  const { start, end } = line;
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const lenSq = dx * dx + dy * dy;
+  const tClick = lenSq === 0 ? 0 : clamp01(((clickPoint.x - start.x) * dx + (clickPoint.y - start.y) * dy) / lenSq);
+
+  let lo = 0;
+  let hi = 1;
+  for (let i = 0; i < ts.length - 1; i++) {
+    if (tClick >= ts[i] && tClick <= ts[i + 1]) {
+      lo = ts[i];
+      hi = ts[i + 1];
+      break;
+    }
+  }
+  if (hi - lo < 1e-6) return null;
+
+  const kept: LineShape[] = [];
+  if (lo > 0) {
+    const segEnd = lerpPoint(start, end, lo);
+    if (distanceMm(start, segEnd) >= TRIM_MIN_PIECE_MM) kept.push(buildLinePiece(line, start, segEnd));
+  }
+  if (hi < 1) {
+    const segStart = lerpPoint(start, end, hi);
+    if (distanceMm(segStart, end) >= TRIM_MIN_PIECE_MM) kept.push(buildLinePiece(line, segStart, end));
+  }
+  return { removedId: line.id, kept };
 }

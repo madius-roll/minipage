@@ -45,13 +45,13 @@ export const dummyShapes: Shape[] = [
   { id: 'col-1', layer: LAYER_COLUMN, kind: 'rect', center: { x: 7700, y: 300 }, widthMm: 400, heightMm: 400, label: 'C2' },
   { id: 'col-2', layer: LAYER_COLUMN, kind: 'circle', center: { x: 300, y: 5700 }, radiusMm: 200, label: 'C3' },
   { id: 'col-3', layer: LAYER_COLUMN, kind: 'rect', center: { x: 7700, y: 5700 }, widthMm: 400, heightMm: 400, label: 'C4' },
-  // 스프링클러 헤드 및 살수반경
-  { id: 'sp-0', layer: LAYER_SPRINKLER, kind: 'circle', center: { x: 2000, y: 1500 }, radiusMm: 2600, label: 'SP-1' },
-  { id: 'sp-1', layer: LAYER_SPRINKLER, kind: 'circle', center: { x: 4000, y: 1500 }, radiusMm: 2600, label: 'SP-2' },
-  { id: 'sp-2', layer: LAYER_SPRINKLER, kind: 'circle', center: { x: 6000, y: 1500 }, radiusMm: 2600, label: 'SP-3' },
-  { id: 'sp-3', layer: LAYER_SPRINKLER, kind: 'circle', center: { x: 2000, y: 4500 }, radiusMm: 2600, label: 'SP-4' },
-  { id: 'sp-4', layer: LAYER_SPRINKLER, kind: 'circle', center: { x: 4000, y: 4500 }, radiusMm: 2600, label: 'SP-5' },
-  { id: 'sp-5', layer: LAYER_SPRINKLER, kind: 'circle', center: { x: 6000, y: 4500 }, radiusMm: 2600, label: 'SP-6' },
+  // 스프링클러 헤드 및 살수반경(SP헤드반경) — 벽체/기둥에 가로막힌 만큼 반경이 잘려서 그려진다
+  { id: 'sp-0', layer: LAYER_SPRINKLER, kind: 'circle', center: { x: 2000, y: 1500 }, radiusMm: 2600, label: 'SP-1', sprinklerHead: true },
+  { id: 'sp-1', layer: LAYER_SPRINKLER, kind: 'circle', center: { x: 4000, y: 1500 }, radiusMm: 2600, label: 'SP-2', sprinklerHead: true },
+  { id: 'sp-2', layer: LAYER_SPRINKLER, kind: 'circle', center: { x: 6000, y: 1500 }, radiusMm: 2600, label: 'SP-3', sprinklerHead: true },
+  { id: 'sp-3', layer: LAYER_SPRINKLER, kind: 'circle', center: { x: 2000, y: 4500 }, radiusMm: 2600, label: 'SP-4', sprinklerHead: true },
+  { id: 'sp-4', layer: LAYER_SPRINKLER, kind: 'circle', center: { x: 4000, y: 4500 }, radiusMm: 2600, label: 'SP-5', sprinklerHead: true },
+  { id: 'sp-5', layer: LAYER_SPRINKLER, kind: 'circle', center: { x: 6000, y: 4500 }, radiusMm: 2600, label: 'SP-6', sprinklerHead: true },
 ];
 
 export const dummyLayers: Layer[] = [

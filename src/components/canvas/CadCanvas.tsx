@@ -2,6 +2,9 @@ import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState }
 import type { Layer, LineShape, Point, Shape } from '../../types/cad';
 import {
   boundsIntersect,
+  computeSprinklerCoveragePolygon,
+  DEFAULT_LINE_THICKNESS_MM,
+  distanceMm,
   distanceToSegment,
   estimateTextBoxMm,
   findNearestVertex,
@@ -38,6 +41,14 @@ interface CadCanvasProps {
   onResetPending: () => void;
   /** TR(트림): removedId 선을 지우고 kept 조각들로 대체 */
   onTrimLine: (removedId: string, kept: LineShape[]) => void;
+  /** 마우스로 직접 그리기 무장 상태 — 켜져 있으면 캔버스 클릭으로 시작점→끝점을 순서대로 찍어 도형을 완성한다 */
+  drawArmed: boolean;
+  /** 무장 상태에서 다음 클릭이 시작점을 찍는 차례인지, 끝점을 찍어 도형을 완성하는 차례인지 */
+  drawPhase: 'start' | 'end';
+  /** 무장 상태에서 클릭 확정 시 호출 — pendingPoint를 시작점/중심점으로 삼아 부모가 실제 도형을 만든다 */
+  onFinishDraw: (point: Point) => void;
+  /** 무장 상태에서 미리보기로 그릴 도형 종류 (기둥 레이어의 사각형 옵션 포함) */
+  drawPreviewKind: 'line' | 'circle' | 'rect';
 }
 
 export interface CadCanvasHandle {
@@ -46,7 +57,6 @@ export interface CadCanvasHandle {
 }
 
 const GRID_MM = 500;
-const DEFAULT_LINE_THICKNESS = 24;
 const CENTER_DOT_RADIUS = 40;
 const CLICK_TOLERANCE_PX = 10;
 const SNAP_TOLERANCE_PX = 18;
@@ -78,12 +88,14 @@ interface PinchState {
 }
 
 const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas(
-  { shapes, layers, selectedIds, onSelect, pendingPoint, mode, onCanvasClick, onMoveShapes, onDragStart, onUndo, canUndo, activeLayerId, onDeleteSelected, onResetPending, onTrimLine },
+  { shapes, layers, selectedIds, onSelect, pendingPoint, mode, onCanvasClick, onMoveShapes, onDragStart, onUndo, canUndo, activeLayerId, onDeleteSelected, onResetPending, onTrimLine, drawArmed, drawPhase, onFinishDraw, drawPreviewKind },
   ref,
 ) {
   const svgRef = useRef<SVGSVGElement>(null);
   /** TR(트림) 모드: 켜져 있는 동안은 클릭이 선택/그리기 대신 "겹치는 지점의 선분 잘라내기"로 동작한다 */
   const [trimMode, setTrimMode] = useState(false);
+  /** 마우스로 그리기 무장 상태에서, 커서를 따라다니는 미리보기 끝점/반지름 지점 (스냅 보정 적용됨) */
+  const [drawPreview, setDrawPreview] = useState<Point | null>(null);
   /**
    * originalShapes/totalDx/totalDy: 드래그 시작 시점의 원본 위치 기준 "진짜" 누적 이동량.
    * appliedDx/appliedDy: 지금까지 onMoveShapes로 실제 반영한 누적량(스냅 보정 포함).
@@ -114,6 +126,11 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
   const visibleShapes = shapes.filter((s) => layerMap.get(s.layer)?.visible !== false);
   /** 클릭/드래그로 선택 가능한 도형 — "그릴 레이어"로 선택된 레이어의 도형만 (다른 레이어는 보이되 선택은 안 됨) */
   const selectableShapes = activeLayerId === ALL_LAYERS_ID ? visibleShapes : visibleShapes.filter((s) => s.layer === activeLayerId);
+  /** SP헤드반경의 방호 범위를 가로막는 장애물 — 벽체·기둥 레이어의 도형만 해당 */
+  const sprinklerObstacles = visibleShapes.filter((s) => {
+    const category = layerMap.get(s.layer)?.category;
+    return category === 'wall' || category === 'column';
+  });
 
   /**
    * 뷰포트의 기준 크기/중심은 도형이 이동·추가될 때마다 다시 계산하지 않고 한 번 고정해 둔다.
@@ -168,6 +185,11 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
     onResetPending();
     centerOnOriginNow();
   };
+
+  // 무장이 풀리거나(취소, 모드/레이어 변경 등) 도형이 확정되어 다시 시작점 차례로 돌아가면 남아있던 미리보기를 지운다.
+  useEffect(() => {
+    if (!drawArmed || drawPhase === 'start') setDrawPreview(null);
+  }, [drawArmed, drawPhase]);
 
   const clientToMm = (clientX: number, clientY: number): Point | null => {
     const svg = svgRef.current;
@@ -253,6 +275,15 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
     return best;
   };
 
+  /** 마우스로 그리기 무장 상태에서 끝점/반지름 지점을 정할 때 쓰는 스냅 우선순위 — 다른 도형 꼭짓점에 붙이고, 없으면 10mm 격자에 반올림 */
+  const resolveDrawPoint = (mm: Point): Point => {
+    return (
+      findLineGuideSnap(mm, pxToMm(PLACEMENT_SNAP_PRIORITY_PX)) ??
+      findPlacementSnap(mm, pxToMm(SNAP_TOLERANCE_PX)) ??
+      { x: Math.round(mm.x / 10) * 10, y: Math.round(mm.y / 10) * 10 }
+    );
+  };
+
   /**
    * 겹친 도형 중 가장 "구체적인"(작은) 도형을 우선 선택한다.
    * 큰 반투명 원(스프링클러 살수반경)이 그 안의 작은 기둥을 가리지 않도록 하기 위함.
@@ -266,7 +297,7 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
       let size = Infinity;
 
       if (shape.kind === 'line') {
-        const thickness = shape.thicknessMm ?? DEFAULT_LINE_THICKNESS;
+        const thickness = shape.thicknessMm ?? DEFAULT_LINE_THICKNESS_MM;
         const dist = distanceToSegment(mm, shape.start, shape.end);
         hit = dist <= thickness / 2 + tolerance;
         size = shape.lengthMm;
@@ -311,7 +342,7 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
     let bestDist = Infinity;
     for (const s of visibleShapes) {
       if (s.kind !== 'line') continue;
-      const thickness = s.thicknessMm ?? DEFAULT_LINE_THICKNESS;
+      const thickness = s.thicknessMm ?? DEFAULT_LINE_THICKNESS_MM;
       const dist = distanceToSegment(mm, s.start, s.end);
       if (dist <= thickness / 2 + tolerance && dist < bestDist) {
         bestDist = dist;
@@ -357,6 +388,17 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
       if (line) {
         const result = trimLineAtPoint(line, mm, visibleShapes);
         if (result) onTrimLine(result.removedId, result.kept);
+      }
+      return;
+    }
+
+    // 마우스로 그리기 무장 상태: 첫 클릭은 시작점/중심점, 두 번째 클릭은 도형 확정 (선택/드래그/재배치는 하지 않는다)
+    if (drawArmed && mode !== 'text') {
+      const point = resolveDrawPoint(mm);
+      if (drawPhase === 'start') {
+        onCanvasClick(point);
+      } else {
+        onFinishDraw(point);
       }
       return;
     }
@@ -442,6 +484,12 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
 
     const mm = clientToMm(e.clientX, e.clientY);
     if (!mm) return;
+
+    if (drawArmed && mode !== 'text') {
+      // 시작점을 찍기 전(phase start)에는 도형 미리보기를 그리지 않는다 — pendingPoint가 아직 이번 도형의 기준점이 아니기 때문
+      setDrawPreview(drawPhase === 'end' ? resolveDrawPoint(mm) : null);
+      return;
+    }
 
     if (marqueeRef.current) {
       const started = marqueeRef.current.startMm;
@@ -536,13 +584,14 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
     <div className="cad-canvas-wrap">
       <svg
         ref={svgRef}
-        className="cad-canvas"
+        className={`cad-canvas ${drawArmed ? 'cad-canvas-draw-armed' : ''}`}
         viewBox={viewBox}
         preserveAspectRatio="xMidYMid meet"
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
+        onPointerLeave={() => setDrawPreview(null)}
       >
         <defs>
           <pattern id="grid" width={GRID_MM} height={GRID_MM} patternUnits="userSpaceOnUse">
@@ -558,7 +607,7 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
           const opacity = activeLayerId === ALL_LAYERS_ID || shape.layer === activeLayerId ? 1 : 0.5;
 
           if (shape.kind === 'line') {
-            const strokeWidth = shape.thicknessMm ?? DEFAULT_LINE_THICKNESS;
+            const strokeWidth = shape.thicknessMm ?? DEFAULT_LINE_THICKNESS_MM;
             const midX = (shape.start.x + shape.end.x) / 2;
             const midY = (shape.start.y + shape.end.y) / 2;
             const dx = shape.end.x - shape.start.x;
@@ -641,19 +690,41 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
             );
           }
 
+          const category = layerMap.get(shape.layer)?.category;
+          const coveragePolygon = shape.sprinklerHead
+            ? computeSprinklerCoveragePolygon(shape.center, shape.radiusMm, sprinklerObstacles, shape.id)
+            : null;
+
           return (
             <g key={shape.id} opacity={opacity} pointerEvents="none">
-              <circle
-                cx={shape.center.x}
-                cy={shape.center.y}
-                r={shape.radiusMm}
-                fill={color}
-                fillOpacity={0.08}
-                stroke={isSelected ? 'var(--primary)' : color}
-                strokeWidth={isSelected ? 30 : 18}
-                strokeDasharray={layerMap.get(shape.layer)?.category === 'sprinkler' ? '60 40' : undefined}
-              />
-              <circle cx={shape.center.x} cy={shape.center.y} r={layerMap.get(shape.layer)?.category === 'column' ? shape.radiusMm : CENTER_DOT_RADIUS} fill={color} />
+              {coveragePolygon ? (
+                <polygon
+                  points={coveragePolygon.map((p) => `${p.x},${p.y}`).join(' ')}
+                  fill={color}
+                  fillOpacity={0.08}
+                  stroke={isSelected ? 'var(--primary)' : color}
+                  strokeWidth={isSelected ? 30 : 18}
+                  strokeLinejoin="round"
+                  strokeDasharray={category === 'sprinkler' ? '60 40' : undefined}
+                />
+              ) : (
+                <circle
+                  cx={shape.center.x}
+                  cy={shape.center.y}
+                  r={shape.radiusMm}
+                  fill={color}
+                  fillOpacity={0.08}
+                  stroke={isSelected ? 'var(--primary)' : color}
+                  strokeWidth={isSelected ? 30 : 18}
+                  strokeDasharray={category === 'sprinkler' ? '60 40' : undefined}
+                />
+              )}
+              {category === 'column' && (
+                <circle cx={shape.center.x} cy={shape.center.y} r={shape.radiusMm} fill={color} />
+              )}
+              {shape.sprinklerHead && (
+                <circle cx={shape.center.x} cy={shape.center.y} r={CENTER_DOT_RADIUS} fill={color} />
+              )}
               {shape.label && (
                 <text x={shape.center.x} y={shape.center.y - shape.radiusMm - 60} textAnchor="middle" className="cad-label">
                   {shape.label}
@@ -680,6 +751,43 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
             {mode === 'line' ? '시작점' : mode === 'text' ? '텍스트 위치' : '중심점'}
           </text>
         </g>
+
+        {/* 마우스로 그리기 무장 상태: 시작점/중심점에서 커서까지의 미리보기 도형 + 실시간 치수 */}
+        {drawArmed && drawPreview && (() => {
+          if (drawPreviewKind === 'line') {
+            const midX = (pendingPoint.x + drawPreview.x) / 2;
+            const midY = (pendingPoint.y + drawPreview.y) / 2;
+            return (
+              <g className="cad-draw-preview" pointerEvents="none">
+                <line x1={pendingPoint.x} y1={pendingPoint.y} x2={drawPreview.x} y2={drawPreview.y} />
+                <text x={midX} y={midY - 100} textAnchor="middle">
+                  {formatMeters(distanceMm(pendingPoint, drawPreview))}
+                </text>
+              </g>
+            );
+          }
+          if (drawPreviewKind === 'rect') {
+            const w = Math.abs(drawPreview.x - pendingPoint.x) * 2;
+            const h = Math.abs(drawPreview.y - pendingPoint.y) * 2;
+            return (
+              <g className="cad-draw-preview" pointerEvents="none">
+                <rect x={pendingPoint.x - w / 2} y={pendingPoint.y - h / 2} width={w} height={h} />
+                <text x={pendingPoint.x} y={pendingPoint.y - h / 2 - 100} textAnchor="middle">
+                  {formatMeters(w)} × {formatMeters(h)}
+                </text>
+              </g>
+            );
+          }
+          const r = distanceMm(pendingPoint, drawPreview);
+          return (
+            <g className="cad-draw-preview" pointerEvents="none">
+              <circle cx={pendingPoint.x} cy={pendingPoint.y} r={r} />
+              <text x={pendingPoint.x} y={pendingPoint.y - r - 100} textAnchor="middle">
+                {formatMeters(r)}
+              </text>
+            </g>
+          );
+        })()}
 
         {/* 드래그 중 스냅된 꼭짓점 표시 */}
         {snapMarker && (

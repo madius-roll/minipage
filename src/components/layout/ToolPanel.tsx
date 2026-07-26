@@ -1,12 +1,12 @@
 import type { FormEvent } from 'react';
 import Button from '../ui/Button';
-import { IconCircle, IconLine, IconText } from '../ui/Icon';
+import { IconLine, IconPencil, IconShapes, IconSprinklerRadius, IconText } from '../ui/Icon';
 import type { Layer, Point } from '../../types/cad';
 import { ALL_LAYERS_ID, DEFAULT_BEAM_THICKNESS_MM } from '../../data/layerMeta';
 import './panels.css';
 import './ToolPanel.css';
 
-export type DrawMode = 'line' | 'circle' | 'text';
+export type DrawMode = 'line' | 'circle' | 'sprinklerHead' | 'text';
 export type ColumnShape = 'circle' | 'rect';
 
 /** 선/도형/텍스트 입력값 — 하단 시트 접힌 상태의 미니 입력창과 값을 공유하기 위해 EditorPage에서 관리한다 */
@@ -39,11 +39,17 @@ interface ToolPanelProps {
   mode: DrawMode;
   onModeChange: (mode: DrawMode) => void;
   pendingPoint: Point;
+  /** 마우스로 직접 그리기 모드(무장 상태) — 켜져 있으면 캔버스 클릭으로 시작점→끝점을 순서대로 찍어 도형을 완성한다 */
+  drawArmed: boolean;
+  onToggleDrawArmed: () => void;
+  /** 무장 상태에서 다음 클릭이 시작점을 정하는 차례인지, 끝점을 찍어 도형을 완성하는 차례인지 */
+  drawPhase: 'start' | 'end';
   drawForm: DrawFormState;
   onDrawFormChange: (patch: Partial<DrawFormState>) => void;
   onAddLine: (lengthMm: number, angleDeg: number, thicknessMm?: number) => void;
   onAddCircle: (radiusMm: number) => void;
   onAddRect: (widthMm: number, heightMm: number) => void;
+  onAddSprinklerHead: (radiusMm: number) => void;
   onAddText: (text: string) => void;
   onResetPending: () => void;
   onUndo: () => void;
@@ -60,11 +66,15 @@ export default function ToolPanel({
   mode,
   onModeChange,
   pendingPoint,
+  drawArmed,
+  onToggleDrawArmed,
+  drawPhase,
   drawForm,
   onDrawFormChange,
   onAddLine,
   onAddCircle,
   onAddRect,
+  onAddSprinklerHead,
   onAddText,
   onResetPending,
   onUndo,
@@ -117,6 +127,13 @@ export default function ToolPanel({
     onDrawFormChange({ radiusMm: '' });
   };
 
+  const handleSubmitSprinklerHead = (e: FormEvent) => {
+    e.preventDefault();
+    if (!circleValid) return;
+    onAddSprinklerHead(radius);
+    onDrawFormChange({ radiusMm: '' });
+  };
+
   return (
     <section className="panel tool-panel">
       <h2 className="panel-title">그리기 도구</h2>
@@ -151,10 +168,19 @@ export default function ToolPanel({
           size="sm"
           variant="ghost"
           active={mode === 'circle'}
-          icon={<IconCircle />}
+          icon={<IconShapes />}
           onClick={() => onModeChange('circle')}
         >
           도형 그리기
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          active={mode === 'sprinklerHead'}
+          icon={<IconSprinklerRadius />}
+          onClick={() => onModeChange('sprinklerHead')}
+        >
+          SP헤드반경
         </Button>
         <Button
           size="sm"
@@ -174,6 +200,28 @@ export default function ToolPanel({
         </button>
       </p>
       <p className="tool-hint">캔버스를 클릭해 {mode === 'line' ? '시작점' : mode === 'text' ? '텍스트 위치' : '중심점'}을 바꿀 수 있어요.</p>
+
+      {mode !== 'text' && (
+        <>
+          <Button
+            size="sm"
+            variant="ghost"
+            active={drawArmed}
+            icon={<IconPencil />}
+            onClick={onToggleDrawArmed}
+            className="tool-draw-toggle"
+          >
+            {drawArmed ? '마우스로 그리기 끄기 (직접 입력만 하기)' : '마우스로 그리기'}
+          </Button>
+          {drawArmed && (
+            <p className="tool-hint">
+              {drawPhase === 'start'
+                ? `캔버스를 클릭해 ${mode === 'line' ? '시작점' : '중심점'}을 찍으세요.`
+                : `캔버스에서 ${mode === 'line' ? '끝점' : '반지름 지점'}을 클릭하면 바로 그려져요. (Esc: 취소)`}
+            </p>
+          )}
+        </>
+      )}
 
       {mode === 'text' ? (
         <form className="tool-form" onSubmit={handleSubmitText}>
@@ -200,6 +248,14 @@ export default function ToolPanel({
             </div>
           )}
           <Button type="submit" size="sm" disabled={!lineValid} className="tool-submit">선 추가</Button>
+        </form>
+      ) : mode === 'sprinklerHead' ? (
+        <form className="tool-form" onSubmit={handleSubmitSprinklerHead}>
+          <div className="field">
+            <label htmlFor="sp-radius">방호 반경 (mm)</label>
+            <input id="sp-radius" type="number" min="1" placeholder="예: 2600" value={radiusMm} onChange={(e) => onDrawFormChange({ radiusMm: e.target.value })} />
+          </div>
+          <Button type="submit" size="sm" disabled={!circleValid} className="tool-submit">SP헤드반경 추가</Button>
         </form>
       ) : (
         <form className="tool-form" onSubmit={handleSubmitPoint}>

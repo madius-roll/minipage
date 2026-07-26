@@ -36,6 +36,11 @@
   line-height: 1.5;
 }
 
+.tool-draw-toggle {
+  justify-content: center;
+  width: 100%;
+}
+
 .tool-form {
   display: flex;
   flex-direction: column;

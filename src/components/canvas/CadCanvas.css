@@ -17,6 +17,10 @@
   touch-action: none;
 }
 
+.cad-canvas-draw-armed {
+  cursor: crosshair;
+}
+
 .cad-zoom-controls {
   position: absolute;
   left: 50%;
@@ -180,6 +184,22 @@
 .cad-pending text {
   fill: var(--primary);
   font-size: 200px;
+  font-family: var(--font-family);
+  font-weight: 600;
+}
+
+.cad-draw-preview line,
+.cad-draw-preview circle,
+.cad-draw-preview rect {
+  stroke: var(--primary);
+  stroke-width: 18;
+  stroke-dasharray: 40 24;
+  fill: none;
+}
+
+.cad-draw-preview text {
+  fill: var(--primary);
+  font-size: 190px;
   font-family: var(--font-family);
   font-weight: 600;
 }

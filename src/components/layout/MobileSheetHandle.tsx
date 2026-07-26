@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import type { Shape } from '../../types/cad';
 import type { DrawFormState, DrawMode } from './ToolPanel';
-import { IconChevronUp, IconCircle, IconLine, IconPlus, IconText } from '../ui/Icon';
+import { IconChevronUp, IconLine, IconPlus, IconShapes, IconSprinklerRadius, IconText } from '../ui/Icon';
 import './MobileSheetHandle.css';
 
 interface MobileSheetHandleProps {
@@ -15,6 +15,7 @@ interface MobileSheetHandleProps {
   onDrawFormChange: (patch: Partial<DrawFormState>) => void;
   onAddLine: (lengthMm: number, angleDeg: number, thicknessMm?: number) => void;
   onAddCircle: (radiusMm: number) => void;
+  onAddSprinklerHead: (radiusMm: number) => void;
   onAddText: (text: string) => void;
   /** 도형 하나가 선택되어 있으면 새로 그리기 대신 그 도형의 수치를 바로 보여주고 즉시 수정할 수 있게 한다 */
   selectedShape: Shape | null;
@@ -167,6 +168,7 @@ export default function MobileSheetHandle({
   onDrawFormChange,
   onAddLine,
   onAddCircle,
+  onAddSprinklerHead,
   onAddText,
   selectedShape,
   onUpdateLine,
@@ -184,7 +186,7 @@ export default function MobileSheetHandle({
   const lineValid = Number.isFinite(length) && length !== 0 && Number.isFinite(angle) && (!isBeam || (Number.isFinite(thickness) && thickness > 0));
   const circleValid = Number.isFinite(radius) && radius > 0;
   const textValid = textValue.trim().length > 0;
-  const quickValid = mode === 'line' ? lineValid : mode === 'circle' ? circleValid : textValid;
+  const quickValid = mode === 'line' ? lineValid : mode === 'circle' || mode === 'sprinklerHead' ? circleValid : textValid;
 
   const handleQuickSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -194,6 +196,9 @@ export default function MobileSheetHandle({
       onDrawFormChange({ lengthMm: '', angleDeg: '' });
     } else if (mode === 'circle') {
       onAddCircle(radius);
+      onDrawFormChange({ radiusMm: '' });
+    } else if (mode === 'sprinklerHead') {
+      onAddSprinklerHead(radius);
       onDrawFormChange({ radiusMm: '' });
     } else {
       onAddText(textValue.trim());
@@ -220,7 +225,16 @@ export default function MobileSheetHandle({
           aria-label="도형 그리기"
           aria-pressed={mode === 'circle'}
         >
-          <IconCircle />
+          <IconShapes />
+        </button>
+        <button
+          type="button"
+          className={`mobile-mode-btn ${mode === 'sprinklerHead' ? 'is-active' : ''}`}
+          onClick={() => onModeChange('sprinklerHead')}
+          aria-label="SP헤드반경"
+          aria-pressed={mode === 'sprinklerHead'}
+        >
+          <IconSprinklerRadius />
         </button>
         <button
           type="button"
@@ -286,12 +300,12 @@ export default function MobileSheetHandle({
               )}
             </>
           )}
-          {mode === 'circle' && (
+          {(mode === 'circle' || mode === 'sprinklerHead') && (
             <input
               type="number"
               inputMode="decimal"
               className="mobile-quick-input"
-              placeholder="반지름(mm)"
+              placeholder={mode === 'sprinklerHead' ? '방호 반경(mm)' : '반지름(mm)'}
               value={radiusMm}
               onChange={(e) => onDrawFormChange({ radiusMm: e.target.value })}
             />

@@ -31,6 +31,8 @@ export interface CircleShape extends BaseShape {
   center: Point;
   radiusMm: number;
   label?: string;
+  /** SP헤드반경(스프링클러 방호범위) 도구로 그린 원 — 벽체/기둥 장애물에 가려진 만큼 반경이 잘려서 그려진다 */
+  sprinklerHead?: boolean;
 }
 
 export interface RectShape extends BaseShape {

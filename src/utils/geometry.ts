@@ -17,6 +17,13 @@ export function distanceMm(a: Point, b: Point): number {
   return Math.hypot(b.x - a.x, b.y - a.y);
 }
 
+/** 두 점 사이의 길이(mm, 반올림)와 각도(도) — pointFromPolar와 동일한 규약(0°=오른쪽, 반시계 증가) */
+export function lengthAndAngleBetween(a: Point, b: Point): { lengthMm: number; angleDeg: number } {
+  const lengthMm = Math.round(distanceMm(a, b));
+  const angleDeg = Math.round((Math.atan2(-(b.y - a.y), b.x - a.x) * 180) / Math.PI * 100) / 100;
+  return { lengthMm, angleDeg };
+}
+
 /** a와 b 사이를 t(0~1) 비율로 보간한 점 */
 export function lerpPoint(a: Point, b: Point, t: number): Point {
   return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
@@ -40,6 +47,9 @@ export function distanceToSegment(p: Point, a: Point, b: Point): number {
   const cy = a.y + t * aby;
   return Math.hypot(p.x - cx, p.y - cy);
 }
+
+/** 두께가 지정되지 않은 선(벽체 등)에 쓰는 기본 두께(mm) — 렌더링 굵기와 히트테스트, 장애물 판정에서 공용으로 쓴다 */
+export const DEFAULT_LINE_THICKNESS_MM = 24;
 
 export interface Bounds {
   minX: number;
@@ -298,4 +308,87 @@ export function trimLineAtPoint(line: LineShape, clickPoint: Point, others: Shap
     if (distanceMm(segStart, end) >= TRIM_MIN_PIECE_MM) kept.push(buildLinePiece(line, segStart, end));
   }
   return { removedId: line.id, kept };
+}
+
+/** 두께 있는 선(벽체)을 감싸는 사각형의 네 꼭짓점 */
+function thickLineQuad(a: Point, b: Point, thicknessMm: number): Point[] {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const nx = (-dy / len) * (thicknessMm / 2);
+  const ny = (dx / len) * (thicknessMm / 2);
+  return [
+    { x: a.x + nx, y: a.y + ny },
+    { x: b.x + nx, y: b.y + ny },
+    { x: b.x - nx, y: b.y - ny },
+    { x: a.x - nx, y: a.y - ny },
+  ];
+}
+
+/** 선분과 임의의 다각형(꼭짓점 순서대로 이어진 폐곡선) 변들의 교차점 */
+function segmentPolygonIntersections(a: Point, b: Point, corners: Point[]): Point[] {
+  const pts: Point[] = [];
+  for (let i = 0; i < corners.length; i++) {
+    const p = segmentIntersection(a, b, corners[i], corners[(i + 1) % corners.length]);
+    if (p) pts.push(p);
+  }
+  return pts;
+}
+
+/** SP헤드반경 원의 둘레를 등분하는 방사선 개수 — 많을수록 매끄럽지만 계산량이 늘어난다 */
+const SPRINKLER_COVERAGE_RAYS = 120;
+
+/**
+ * SP헤드반경(스프링클러 방호범위) 원이 벽체/기둥 장애물에 가로막힌 만큼 안쪽으로 당겨진
+ * 다각형 좌표를 계산한다. 장애물이 없는 방향은 원래 반지름까지 그대로 뻗는다.
+ * obstacles에는 장애물로 취급할 도형(벽체 선, 기둥 원/사각형)만 넘긴다.
+ */
+export function computeSprinklerCoveragePolygon(
+  center: Point,
+  radiusMm: number,
+  obstacles: Shape[],
+  excludeId: string,
+): Point[] {
+  const quads: Point[][] = [];
+  const circles: { center: Point; radius: number }[] = [];
+  const rects: { center: Point; widthMm: number; heightMm: number }[] = [];
+
+  for (const s of obstacles) {
+    if (s.id === excludeId) continue;
+    if (s.kind === 'line') {
+      quads.push(thickLineQuad(s.start, s.end, s.thicknessMm ?? DEFAULT_LINE_THICKNESS_MM));
+    } else if (s.kind === 'circle') {
+      circles.push({ center: s.center, radius: s.radiusMm });
+    } else if (s.kind === 'rect') {
+      rects.push({ center: s.center, widthMm: s.widthMm, heightMm: s.heightMm });
+    }
+  }
+
+  const points: Point[] = [];
+  for (let i = 0; i < SPRINKLER_COVERAGE_RAYS; i++) {
+    const angle = (i / SPRINKLER_COVERAGE_RAYS) * Math.PI * 2;
+    const dirX = Math.cos(angle);
+    const dirY = Math.sin(angle);
+    const rayEnd = { x: center.x + dirX * radiusMm, y: center.y + dirY * radiusMm };
+
+    let nearest = radiusMm;
+    for (const quad of quads) {
+      for (const p of segmentPolygonIntersections(center, rayEnd, quad)) {
+        nearest = Math.min(nearest, distanceMm(center, p));
+      }
+    }
+    for (const c of circles) {
+      for (const p of segmentCircleIntersections(center, rayEnd, c.center, c.radius)) {
+        nearest = Math.min(nearest, distanceMm(center, p));
+      }
+    }
+    for (const r of rects) {
+      for (const p of segmentRectIntersections(center, rayEnd, r.center, r.widthMm, r.heightMm)) {
+        nearest = Math.min(nearest, distanceMm(center, p));
+      }
+    }
+
+    points.push({ x: center.x + dirX * nearest, y: center.y + dirY * nearest });
+  }
+  return points;
 }

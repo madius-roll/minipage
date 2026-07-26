@@ -10,7 +10,7 @@ import MobileLayerStrip from '../components/layout/MobileLayerStrip';
 import { dummyLayers, dummyShapes } from '../data/dummyDrawing';
 import { ALL_LAYERS_ID, LAYER_COLOR_PALETTE, MAX_LAYERS } from '../data/layerMeta';
 import type { Layer, LayerCategory, LineShape, Point, Shape } from '../types/cad';
-import { genId, pointFromPolar, translateShape } from '../utils/geometry';
+import { distanceMm, genId, lengthAndAngleBetween, pointFromPolar, translateShape } from '../utils/geometry';
 import './EditorPage.css';
 
 const ORIGIN: Point = { x: 0, y: 0 };
@@ -30,6 +30,10 @@ export default function EditorPage() {
   const [activeLayerId, setActiveLayerId] = useState<string>(dummyLayers[0].id);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [pendingPoint, setPendingPoint] = useState<Point>(ORIGIN);
+  /** 마우스로 직접 그리기 무장 상태 — CAD처럼 그리기 모드에서는 기본으로 켜져 있다 */
+  const [drawArmed, setDrawArmed] = useState(true);
+  /** 무장 상태에서 다음 클릭이 시작점을 찍는 차례인지, 끝점을 찍어 도형을 완성하는 차례인지 */
+  const [drawPhase, setDrawPhase] = useState<'start' | 'end'>('start');
   const [mergeMode, setMergeMode] = useState(false);
   const [mergeSelection, setMergeSelection] = useState<string[]>([]);
   const [guideOpen, setGuideOpen] = useState(false);
@@ -57,10 +61,26 @@ export default function EditorPage() {
 
   const handleActiveLayerChange = (id: string) => {
     setActiveLayerId(id);
+    setDrawArmed(drawMode !== 'text');
+    setDrawPhase('start');
     // 다른 레이어로 바꾸면 그 레이어에 속하지 않은 선택은 해제한다 ("전체 레이어"에서는 모두 유지)
     if (id !== ALL_LAYERS_ID) {
       setSelectedIds((prev) => prev.filter((sid) => shapes.find((s) => s.id === sid)?.layer === id));
     }
+  };
+
+  const handleModeChange = (nextMode: DrawMode) => {
+    setDrawMode(nextMode);
+    setDrawArmed(nextMode !== 'text');
+    setDrawPhase('start');
+  };
+
+  const handleToggleDrawArmed = () => {
+    setDrawArmed((prev) => {
+      const next = !prev;
+      if (next) setDrawPhase('start');
+      return next;
+    });
   };
 
   const toggleLayerVisible = (id: string) => {
@@ -143,6 +163,48 @@ export default function EditorPage() {
     setSelectedIds([id]);
   };
 
+  const handleAddSprinklerHead = (radiusMm: number) => {
+    pushHistory();
+    const id = genId('circle');
+    setShapes((prev) => [...prev, { id, layer: activeLayerId, kind: 'circle', center: pendingPoint, radiusMm, sprinklerHead: true }]);
+    setSelectedIds([id]);
+  };
+
+  /** 캔버스 클릭으로 시작점/중심점을 정할 때 호출 — 무장 상태라면 다음 클릭은 끝점을 찍는 차례로 넘어간다 */
+  const handleCanvasClick = (point: Point) => {
+    setPendingPoint(point);
+    if (drawArmed) setDrawPhase('end');
+  };
+
+  /** 마우스로 그리기 무장 상태에서 캔버스 클릭으로 확정될 때 호출 — pendingPoint(시작점/중심점)를 기준으로 실제 도형을 만든다 */
+  const handleFinishDraw = (point: Point) => {
+    const activeLayer = layers.find((l) => l.id === activeLayerId);
+    const isBeam = activeLayer?.category === 'beam';
+    const isColumn = activeLayer?.category === 'column';
+
+    if (drawMode === 'line') {
+      const { lengthMm, angleDeg } = lengthAndAngleBetween(pendingPoint, point);
+      if (lengthMm > 0) {
+        const thickness = parseFloat(drawForm.thicknessMm);
+        handleAddLine(lengthMm, angleDeg, isBeam && Number.isFinite(thickness) && thickness > 0 ? thickness : undefined);
+      }
+    } else if (drawMode === 'circle') {
+      if (isColumn && drawForm.columnShape === 'rect') {
+        const widthMm = Math.round(Math.abs(point.x - pendingPoint.x) * 2);
+        const heightMm = Math.round(Math.abs(point.y - pendingPoint.y) * 2);
+        if (widthMm > 0 && heightMm > 0) handleAddRect(widthMm, heightMm);
+      } else {
+        const radiusMm = Math.round(distanceMm(pendingPoint, point));
+        if (radiusMm > 0) handleAddCircle(radiusMm);
+      }
+    } else if (drawMode === 'sprinklerHead') {
+      const radiusMm = Math.round(distanceMm(pendingPoint, point));
+      if (radiusMm > 0) handleAddSprinklerHead(radiusMm);
+    }
+    // 무장 상태는 유지하고 다시 시작점을 찍는 차례로 돌아가 연속으로 그릴 수 있게 한다
+    setDrawPhase('start');
+  };
+
   const handleAddText = (text: string) => {
     pushHistory();
     const id = genId('text');
@@ -156,6 +218,7 @@ export default function EditorPage() {
 
   const handleResetPending = () => {
     setPendingPoint(ORIGIN);
+    setDrawPhase('start');
     canvasRef.current?.centerOnOrigin();
   };
 
@@ -238,6 +301,16 @@ export default function EditorPage() {
     const handler = (e: KeyboardEvent) => {
       if (isEditableTarget(e.target) || guideOpen) return;
 
+      if (e.key === 'Escape' && drawArmed) {
+        e.preventDefault();
+        // 끝점을 찍는 중이었다면 진행 중인 도형만 취소하고, 이미 시작점 차례라면 마우스 그리기 자체를 끈다
+        if (drawPhase === 'end') {
+          setDrawPhase('start');
+        } else {
+          setDrawArmed(false);
+        }
+        return;
+      }
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIds.length > 0) {
         e.preventDefault();
         handleDeleteSelected();
@@ -257,12 +330,15 @@ export default function EditorPage() {
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedIds, shapes, clipboard, guideOpen, layers, activeLayerId]);
+  }, [selectedIds, shapes, clipboard, guideOpen, layers, activeLayerId, drawArmed, drawPhase]);
 
   const selectedShapes = shapes.filter((s) => selectedIds.includes(s.id));
   const activeLayer = layers.find((l) => l.id === activeLayerId);
   const activeLayerLabel = activeLayerId === ALL_LAYERS_ID ? '전체 레이어' : (activeLayer?.name ?? '');
   const activeLayerColor = activeLayerId === ALL_LAYERS_ID ? 'var(--sub)' : (activeLayer?.color ?? 'var(--sub)');
+  /** 마우스로 그리기 미리보기에 쓸 도형 종류 — 도형그리기 모드에서 기둥 레이어의 사각형을 고른 경우만 rect, 나머지(SP헤드반경 포함)는 circle */
+  const drawPreviewKind: 'line' | 'circle' | 'rect' =
+    drawMode === 'line' ? 'line' : drawMode === 'circle' && activeLayer?.category === 'column' && drawForm.columnShape === 'rect' ? 'rect' : 'circle';
 
   return (
     <div className="app-shell" data-mobile-sheet={mobileSheetOpen ? 'open' : 'closed'}>
@@ -281,13 +357,17 @@ export default function EditorPage() {
             activeLayerId={activeLayerId}
             onActiveLayerChange={handleActiveLayerChange}
             mode={drawMode}
-            onModeChange={setDrawMode}
+            onModeChange={handleModeChange}
             pendingPoint={pendingPoint}
+            drawArmed={drawArmed}
+            onToggleDrawArmed={handleToggleDrawArmed}
+            drawPhase={drawPhase}
             drawForm={drawForm}
             onDrawFormChange={updateDrawForm}
             onAddLine={handleAddLine}
             onAddCircle={handleAddCircle}
             onAddRect={handleAddRect}
+            onAddSprinklerHead={handleAddSprinklerHead}
             onAddText={handleAddText}
             onResetPending={handleResetPending}
             onUndo={handleUndo}
@@ -321,7 +401,7 @@ export default function EditorPage() {
             onSelect={setSelectedIds}
             pendingPoint={pendingPoint}
             mode={drawMode}
-            onCanvasClick={setPendingPoint}
+            onCanvasClick={handleCanvasClick}
             onMoveShapes={handleMoveShapes}
             onDragStart={handleDragStart}
             onUndo={handleUndo}
@@ -330,6 +410,10 @@ export default function EditorPage() {
             onDeleteSelected={handleDeleteSelected}
             onResetPending={handleResetPending}
             onTrimLine={handleTrimLine}
+            drawArmed={drawArmed}
+            drawPhase={drawPhase}
+            onFinishDraw={handleFinishDraw}
+            drawPreviewKind={drawPreviewKind}
           />
         </main>
       </div>
@@ -352,13 +436,14 @@ export default function EditorPage() {
         layerName={activeLayerLabel}
         layerColor={activeLayerColor}
         mode={drawMode}
-        onModeChange={setDrawMode}
+        onModeChange={handleModeChange}
         isDrawable={activeLayerId !== ALL_LAYERS_ID}
         isBeam={activeLayer?.category === 'beam'}
         drawForm={drawForm}
         onDrawFormChange={updateDrawForm}
         onAddLine={handleAddLine}
         onAddCircle={handleAddCircle}
+        onAddSprinklerHead={handleAddSprinklerHead}
         onAddText={handleAddText}
         selectedShape={selectedShapes.length === 1 ? selectedShapes[0] : null}
         onUpdateLine={handleUpdateLine}

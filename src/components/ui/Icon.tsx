@@ -22,6 +22,24 @@ export function IconCircle({ className = '' }: IconProps) {
   );
 }
 
+export function IconShapes({ className = '' }: IconProps) {
+  return (
+    <svg className={`${base} ${className}`} viewBox="0 0 24 24">
+      <circle cx="9.5" cy="9.5" r="6.5" />
+      <rect x="10" y="10" width="11" height="11" rx="2" />
+    </svg>
+  );
+}
+
+export function IconSprinklerRadius({ className = '' }: IconProps) {
+  return (
+    <svg className={`${base} ${className}`} viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="9" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
+
 export function IconLayers({ className = '' }: IconProps) {
   return (
     <svg className={`${base} ${className}`} viewBox="0 0 24 24">

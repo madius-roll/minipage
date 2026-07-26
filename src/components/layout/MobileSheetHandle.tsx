@@ -1,8 +1,22 @@
-import { useEffect, useState, type FormEvent } from 'react';
-import type { Shape } from '../../types/cad';
-import type { DrawFormState, DrawMode } from './ToolPanel';
+import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
+import type { LayerCategory, Shape } from '../../types/cad';
+import { getAllowedDrawModes, type DrawFormState, type DrawMode } from './ToolPanel';
 import { IconChevronUp, IconLine, IconPlus, IconShapes, IconSprinklerRadius, IconText } from '../ui/Icon';
 import './MobileSheetHandle.css';
+
+const MODE_ICON: Record<DrawMode, ReactNode> = {
+  line: <IconLine />,
+  circle: <IconShapes />,
+  sprinklerHead: <IconSprinklerRadius />,
+  text: <IconText />,
+};
+
+const MODE_LABEL: Record<DrawMode, string> = {
+  line: '선 그리기',
+  circle: '도형 그리기',
+  sprinklerHead: 'SP헤드반경',
+  text: '텍스트',
+};
 
 interface MobileSheetHandleProps {
   layerName: string;
@@ -10,6 +24,7 @@ interface MobileSheetHandleProps {
   mode: DrawMode;
   onModeChange: (mode: DrawMode) => void;
   isDrawable: boolean;
+  layerCategory?: LayerCategory;
   isBeam: boolean;
   drawForm: DrawFormState;
   onDrawFormChange: (patch: Partial<DrawFormState>) => void;
@@ -163,6 +178,7 @@ export default function MobileSheetHandle({
   mode,
   onModeChange,
   isDrawable,
+  layerCategory,
   isBeam,
   drawForm,
   onDrawFormChange,
@@ -187,6 +203,7 @@ export default function MobileSheetHandle({
   const circleValid = Number.isFinite(radius) && radius > 0;
   const textValid = textValue.trim().length > 0;
   const quickValid = mode === 'line' ? lineValid : mode === 'circle' || mode === 'sprinklerHead' ? circleValid : textValid;
+  const allowedModes = getAllowedDrawModes(layerCategory);
 
   const handleQuickSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -208,44 +225,22 @@ export default function MobileSheetHandle({
 
   return (
     <div className="mobile-sheet-handle">
-      <div className="mobile-mode-switch" role="group" aria-label="그리기 모드">
-        <button
-          type="button"
-          className={`mobile-mode-btn ${mode === 'line' ? 'is-active' : ''}`}
-          onClick={() => onModeChange('line')}
-          aria-label="선 그리기"
-          aria-pressed={mode === 'line'}
-        >
-          <IconLine />
-        </button>
-        <button
-          type="button"
-          className={`mobile-mode-btn ${mode === 'circle' ? 'is-active' : ''}`}
-          onClick={() => onModeChange('circle')}
-          aria-label="도형 그리기"
-          aria-pressed={mode === 'circle'}
-        >
-          <IconShapes />
-        </button>
-        <button
-          type="button"
-          className={`mobile-mode-btn ${mode === 'sprinklerHead' ? 'is-active' : ''}`}
-          onClick={() => onModeChange('sprinklerHead')}
-          aria-label="SP헤드반경"
-          aria-pressed={mode === 'sprinklerHead'}
-        >
-          <IconSprinklerRadius />
-        </button>
-        <button
-          type="button"
-          className={`mobile-mode-btn ${mode === 'text' ? 'is-active' : ''}`}
-          onClick={() => onModeChange('text')}
-          aria-label="텍스트"
-          aria-pressed={mode === 'text'}
-        >
-          <IconText />
-        </button>
-      </div>
+      {isDrawable && (
+        <div className="mobile-mode-switch" role="group" aria-label="그리기 모드">
+          {allowedModes.map((m) => (
+            <button
+              key={m}
+              type="button"
+              className={`mobile-mode-btn ${mode === m ? 'is-active' : ''}`}
+              onClick={() => onModeChange(m)}
+              aria-label={MODE_LABEL[m]}
+              aria-pressed={mode === m}
+            >
+              {MODE_ICON[m]}
+            </button>
+          ))}
+        </div>
+      )}
 
       <button type="button" className="mobile-sheet-handle-toggle" onClick={onToggle} aria-expanded={open}>
         <span className="mobile-sheet-handle-grip" aria-hidden="true" />

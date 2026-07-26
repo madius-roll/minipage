@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import Header from '../components/layout/Header';
-import ToolPanel, { DEFAULT_DRAW_FORM, type DrawFormState, type DrawMode } from '../components/layout/ToolPanel';
+import ToolPanel, { DEFAULT_DRAW_FORM, getAllowedDrawModes, supportsRectShape, type DrawFormState, type DrawMode } from '../components/layout/ToolPanel';
 import LayerPanel from '../components/layout/LayerPanel';
 import PropertyPanel from '../components/layout/PropertyPanel';
 import CadCanvas, { type CadCanvasHandle } from '../components/canvas/CadCanvas';
@@ -52,6 +52,8 @@ export default function EditorPage() {
     if (activeLayerId === ALL_LAYERS_ID) return;
     if (!layers.some((l) => l.id === activeLayerId) && layers.length > 0) {
       setActiveLayerId(layers[0].id);
+      const allowed = getAllowedDrawModes(layers[0].category);
+      setDrawMode((prev) => (allowed.includes(prev) ? prev : allowed[0]));
     }
   }, [layers, activeLayerId]);
 
@@ -61,21 +63,29 @@ export default function EditorPage() {
 
   const handleActiveLayerChange = (id: string) => {
     setActiveLayerId(id);
-    setDrawArmed(drawMode !== 'text');
     setDrawPhase('start');
-    // 다른 레이어로 바꾸면 그 레이어에 속하지 않은 선택은 해제한다 ("전체 레이어"에서는 모두 유지)
-    if (id !== ALL_LAYERS_ID) {
+    // "전체 레이어"에서는 그리기를 할 수 없다 — 전체 지우기 등 관리 동작만 가능
+    if (id === ALL_LAYERS_ID) {
+      setDrawArmed(false);
+    } else {
+      const layer = layers.find((l) => l.id === id);
+      const allowed = getAllowedDrawModes(layer?.category);
+      const nextMode = allowed.includes(drawMode) ? drawMode : allowed[0];
+      if (nextMode !== drawMode) setDrawMode(nextMode);
+      setDrawArmed(nextMode !== 'text');
+      // 다른 레이어로 바꾸면 그 레이어에 속하지 않은 선택은 해제한다
       setSelectedIds((prev) => prev.filter((sid) => shapes.find((s) => s.id === sid)?.layer === id));
     }
   };
 
   const handleModeChange = (nextMode: DrawMode) => {
     setDrawMode(nextMode);
-    setDrawArmed(nextMode !== 'text');
+    setDrawArmed(nextMode !== 'text' && activeLayerId !== ALL_LAYERS_ID);
     setDrawPhase('start');
   };
 
   const handleToggleDrawArmed = () => {
+    if (activeLayerId === ALL_LAYERS_ID) return;
     setDrawArmed((prev) => {
       const next = !prev;
       if (next) setDrawPhase('start');
@@ -180,7 +190,7 @@ export default function EditorPage() {
   const handleFinishDraw = (point: Point) => {
     const activeLayer = layers.find((l) => l.id === activeLayerId);
     const isBeam = activeLayer?.category === 'beam';
-    const isColumn = activeLayer?.category === 'column';
+    const canPickRectShape = supportsRectShape(activeLayer?.category);
 
     if (drawMode === 'line') {
       const { lengthMm, angleDeg } = lengthAndAngleBetween(pendingPoint, point);
@@ -189,7 +199,7 @@ export default function EditorPage() {
         handleAddLine(lengthMm, angleDeg, isBeam && Number.isFinite(thickness) && thickness > 0 ? thickness : undefined);
       }
     } else if (drawMode === 'circle') {
-      if (isColumn && drawForm.columnShape === 'rect') {
+      if (canPickRectShape && drawForm.columnShape === 'rect') {
         const widthMm = Math.round(Math.abs(point.x - pendingPoint.x) * 2);
         const heightMm = Math.round(Math.abs(point.y - pendingPoint.y) * 2);
         if (widthMm > 0 && heightMm > 0) handleAddRect(widthMm, heightMm);
@@ -336,9 +346,9 @@ export default function EditorPage() {
   const activeLayer = layers.find((l) => l.id === activeLayerId);
   const activeLayerLabel = activeLayerId === ALL_LAYERS_ID ? '전체 레이어' : (activeLayer?.name ?? '');
   const activeLayerColor = activeLayerId === ALL_LAYERS_ID ? 'var(--sub)' : (activeLayer?.color ?? 'var(--sub)');
-  /** 마우스로 그리기 미리보기에 쓸 도형 종류 — 도형그리기 모드에서 기둥 레이어의 사각형을 고른 경우만 rect, 나머지(SP헤드반경 포함)는 circle */
+  /** 마우스로 그리기 미리보기에 쓸 도형 종류 — 도형그리기 모드에서 벽체/기둥 레이어의 사각형을 고른 경우만 rect, 나머지(SP헤드반경 포함)는 circle */
   const drawPreviewKind: 'line' | 'circle' | 'rect' =
-    drawMode === 'line' ? 'line' : drawMode === 'circle' && activeLayer?.category === 'column' && drawForm.columnShape === 'rect' ? 'rect' : 'circle';
+    drawMode === 'line' ? 'line' : drawMode === 'circle' && supportsRectShape(activeLayer?.category) && drawForm.columnShape === 'rect' ? 'rect' : 'circle';
 
   return (
     <div className="app-shell" data-mobile-sheet={mobileSheetOpen ? 'open' : 'closed'}>
@@ -438,6 +448,7 @@ export default function EditorPage() {
         mode={drawMode}
         onModeChange={handleModeChange}
         isDrawable={activeLayerId !== ALL_LAYERS_ID}
+        layerCategory={activeLayer?.category}
         isBeam={activeLayer?.category === 'beam'}
         drawForm={drawForm}
         onDrawFormChange={updateDrawForm}

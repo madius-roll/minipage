@@ -1,13 +1,48 @@
-import type { FormEvent } from 'react';
+import type { FormEvent, ReactNode } from 'react';
 import Button from '../ui/Button';
 import { IconLine, IconPencil, IconShapes, IconSprinklerRadius, IconText } from '../ui/Icon';
-import type { Layer, Point } from '../../types/cad';
+import type { Layer, LayerCategory, Point } from '../../types/cad';
 import { ALL_LAYERS_ID, DEFAULT_BEAM_THICKNESS_MM } from '../../data/layerMeta';
 import './panels.css';
 import './ToolPanel.css';
 
 export type DrawMode = 'line' | 'circle' | 'sprinklerHead' | 'text';
 export type ColumnShape = 'circle' | 'rect';
+
+const DRAW_MODE_LABEL: Record<DrawMode, string> = {
+  line: '선 그리기',
+  circle: '도형 그리기',
+  sprinklerHead: 'SP헤드반경',
+  text: '텍스트',
+};
+
+const DRAW_MODE_ICON: Record<DrawMode, ReactNode> = {
+  line: <IconLine />,
+  circle: <IconShapes />,
+  sprinklerHead: <IconSprinklerRadius />,
+  text: <IconText />,
+};
+
+/** 레이어 용도별로 실제 쓰이는 그리기 도구만 메뉴에 남긴다 (예: 스프링클러 레이어엔 SP헤드반경·텍스트만) */
+export function getAllowedDrawModes(category?: LayerCategory): DrawMode[] {
+  switch (category) {
+    case 'wall':
+      return ['line', 'circle', 'text'];
+    case 'beam':
+      return ['line', 'text'];
+    case 'column':
+      return ['line', 'circle', 'text'];
+    case 'sprinkler':
+      return ['sprinklerHead', 'text'];
+    default:
+      return ['line', 'circle', 'sprinklerHead', 'text'];
+  }
+}
+
+/** 도형 그리기에서 원/사각형을 함께 고를 수 있는 레이어 — 벽체(방 형태), 기둥(사각 기둥) */
+export function supportsRectShape(category?: LayerCategory): boolean {
+  return category === 'wall' || category === 'column';
+}
 
 /** 선/도형/텍스트 입력값 — 하단 시트 접힌 상태의 미니 입력창과 값을 공유하기 위해 EditorPage에서 관리한다 */
 export interface DrawFormState {
@@ -87,7 +122,8 @@ export default function ToolPanel({
   const isAllLayers = activeLayerId === ALL_LAYERS_ID;
   const activeLayer = layers.find((l) => l.id === activeLayerId);
   const isBeam = activeLayer?.category === 'beam';
-  const isColumn = activeLayer?.category === 'column';
+  const canPickRectShape = supportsRectShape(activeLayer?.category);
+  const allowedModes = getAllowedDrawModes(activeLayer?.category);
 
   const length = parseFloat(lengthMm);
   const angle = parseFloat(angleDeg);
@@ -117,7 +153,7 @@ export default function ToolPanel({
 
   const handleSubmitPoint = (e: FormEvent) => {
     e.preventDefault();
-    if (isColumn && columnShape === 'rect') {
+    if (canPickRectShape && columnShape === 'rect') {
       if (!rectValid) return;
       onAddRect(width, height);
     } else {
@@ -155,42 +191,18 @@ export default function ToolPanel({
       ) : (
         <>
       <div className="tool-mode-switch tool-mode-switch-draw">
-        <Button
-          size="sm"
-          variant="ghost"
-          active={mode === 'line'}
-          icon={<IconLine />}
-          onClick={() => onModeChange('line')}
-        >
-          선 그리기
-        </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          active={mode === 'circle'}
-          icon={<IconShapes />}
-          onClick={() => onModeChange('circle')}
-        >
-          도형 그리기
-        </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          active={mode === 'sprinklerHead'}
-          icon={<IconSprinklerRadius />}
-          onClick={() => onModeChange('sprinklerHead')}
-        >
-          SP헤드반경
-        </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          active={mode === 'text'}
-          icon={<IconText />}
-          onClick={() => onModeChange('text')}
-        >
-          텍스트
-        </Button>
+        {allowedModes.map((m) => (
+          <Button
+            key={m}
+            size="sm"
+            variant="ghost"
+            active={mode === m}
+            icon={DRAW_MODE_ICON[m]}
+            onClick={() => onModeChange(m)}
+          >
+            {DRAW_MODE_LABEL[m]}
+          </Button>
+        ))}
       </div>
 
       <p className="tool-pending-point">
@@ -211,7 +223,7 @@ export default function ToolPanel({
             onClick={onToggleDrawArmed}
             className="tool-draw-toggle"
           >
-            {drawArmed ? '마우스로 그리기 끄기 (직접 입력만 하기)' : '마우스로 그리기'}
+            마우스로 그리기 {drawArmed ? 'ON' : 'OFF'}
           </Button>
           {drawArmed && (
             <p className="tool-hint">
@@ -259,7 +271,7 @@ export default function ToolPanel({
         </form>
       ) : (
         <form className="tool-form" onSubmit={handleSubmitPoint}>
-          {isColumn && (
+          {canPickRectShape && (
             <div className="tool-mode-switch">
               <Button type="button" size="sm" variant="ghost" active={columnShape === 'circle'} onClick={() => onDrawFormChange({ columnShape: 'circle' })}>
                 원형
@@ -270,7 +282,7 @@ export default function ToolPanel({
             </div>
           )}
 
-          {isColumn && columnShape === 'rect' ? (
+          {canPickRectShape && columnShape === 'rect' ? (
             <>
               <div className="field">
                 <label htmlFor="width">가로 (mm)</label>
@@ -297,9 +309,11 @@ export default function ToolPanel({
       )}
 
       <div className="tool-session-actions">
-        <Button size="sm" variant="ghost" onClick={onUndo} disabled={!canUndo} className="tool-undo">
-          마지막 도형 실행 취소
-        </Button>
+        {!isAllLayers && (
+          <Button size="sm" variant="ghost" onClick={onUndo} disabled={!canUndo} className="tool-undo">
+            마지막 도형 실행 취소
+          </Button>
+        )}
         <Button size="sm" variant="ghost" onClick={onClearAll} disabled={!canClearAll} className="tool-clear-all">
           전체 지우기
         </Button>

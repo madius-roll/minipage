@@ -40,6 +40,16 @@ export function IconSprinklerRadius({ className = '' }: IconProps) {
   );
 }
 
+export function IconDownload({ className = '' }: IconProps) {
+  return (
+    <svg className={`${base} ${className}`} viewBox="0 0 24 24">
+      <path d="M12 3v12" />
+      <polyline points="7,10 12,15 17,10" />
+      <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
+    </svg>
+  );
+}
+
 export function IconLayers({ className = '' }: IconProps) {
   return (
     <svg className={`${base} ${className}`} viewBox="0 0 24 24">

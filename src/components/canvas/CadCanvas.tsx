@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
-import type { Layer, LineShape, Point, Shape } from '../../types/cad';
+import type { Layer, LineShape, Point, RectShape, Shape } from '../../types/cad';
 import {
   boundsIntersect,
   computeSprinklerCoveragePolygon,
@@ -15,6 +15,7 @@ import {
   lerpPoint,
   nearestPointOnCircle,
   pointFromPolar,
+  rectToLineEdges,
   translateShape,
   trimLineAtPoint,
 } from '../../utils/geometry';
@@ -54,6 +55,8 @@ interface CadCanvasProps {
 export interface CadCanvasHandle {
   /** 원점(0,0)이 화면 정중앙에 오도록 이동(줌 배율은 유지) */
   centerOnOrigin: () => void;
+  /** PDF 내보내기 등에서 현재 캔버스 SVG 엘리먼트를 그대로 읽어가기 위한 접근자 */
+  getSvgElement: () => SVGSVGElement | null;
 }
 
 const GRID_MM = 500;
@@ -178,6 +181,7 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
 
   useImperativeHandle(ref, () => ({
     centerOnOrigin: centerOnOriginNow,
+    getSvgElement: () => svgRef.current,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }), []);
 
@@ -336,17 +340,32 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
     return selectableShapes.filter((s) => boundsIntersect(rectBounds, getShapeBounds(s))).map((s) => s.id);
   };
 
-  /** TR 모드 전용: 레이어 구분 없이(활성 레이어 제한 무시) 클릭 지점에서 가장 가까운 선을 찾는다 */
-  const findNearestTrimLine = (mm: Point, tolerance: number): LineShape | null => {
-    let best: LineShape | null = null;
+  /** TR로 클릭한 대상 — 선은 그대로, 사각형은 클릭한 변만 트림 대상 선으로 분해해 다룬다 (원은 대상에서 제외) */
+  type TrimTarget =
+    | { kind: 'line'; shape: LineShape }
+    | { kind: 'rectEdge'; rect: RectShape; edges: LineShape[]; edgeIndex: number };
+
+  /** TR 모드 전용: 레이어 구분 없이(활성 레이어 제한 무시) 클릭 지점에서 가장 가까운 선/사각형 변을 찾는다 */
+  const findNearestTrimTarget = (mm: Point, tolerance: number): TrimTarget | null => {
+    let best: TrimTarget | null = null;
     let bestDist = Infinity;
     for (const s of visibleShapes) {
-      if (s.kind !== 'line') continue;
-      const thickness = s.thicknessMm ?? DEFAULT_LINE_THICKNESS_MM;
-      const dist = distanceToSegment(mm, s.start, s.end);
-      if (dist <= thickness / 2 + tolerance && dist < bestDist) {
-        bestDist = dist;
-        best = s;
+      if (s.kind === 'line') {
+        const thickness = s.thicknessMm ?? DEFAULT_LINE_THICKNESS_MM;
+        const dist = distanceToSegment(mm, s.start, s.end);
+        if (dist <= thickness / 2 + tolerance && dist < bestDist) {
+          bestDist = dist;
+          best = { kind: 'line', shape: s };
+        }
+      } else if (s.kind === 'rect') {
+        const edges = rectToLineEdges(s);
+        edges.forEach((edge, edgeIndex) => {
+          const dist = distanceToSegment(mm, edge.start, edge.end);
+          if (dist <= DEFAULT_LINE_THICKNESS_MM / 2 + tolerance && dist < bestDist) {
+            bestDist = dist;
+            best = { kind: 'rectEdge', rect: s, edges, edgeIndex };
+          }
+        });
       }
     }
     return best;
@@ -384,10 +403,17 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
 
     // TR(트림) 모드: 다른 도형과 겹치거나 가로지르는 지점을 클릭하면 그 구간만 잘라낸다. 선택/그리기는 하지 않는다.
     if (trimMode) {
-      const line = findNearestTrimLine(mm, pxToMm(CLICK_TOLERANCE_PX));
-      if (line) {
-        const result = trimLineAtPoint(line, mm, visibleShapes);
+      const target = findNearestTrimTarget(mm, pxToMm(CLICK_TOLERANCE_PX));
+      if (target?.kind === 'line') {
+        const result = trimLineAtPoint(target.shape, mm, visibleShapes);
         if (result) onTrimLine(result.removedId, result.kept);
+      } else if (target?.kind === 'rectEdge') {
+        // 클릭한 변만 다른 도형들과 교차 지점 기준으로 자르고, 나머지 세 변은 그대로 선으로 남긴다
+        const clickedEdge = target.edges[target.edgeIndex];
+        const otherEdges = target.edges.filter((_, i) => i !== target.edgeIndex);
+        const others = visibleShapes.filter((s) => s.id !== target.rect.id);
+        const result = trimLineAtPoint(clickedEdge, mm, others);
+        if (result) onTrimLine(target.rect.id, [...result.kept, ...otherEdges]);
       }
       return;
     }
@@ -598,7 +624,7 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
             <path d={`M ${GRID_MM} 0 L 0 0 0 ${GRID_MM}`} fill="none" stroke="var(--border)" strokeWidth={8} />
           </pattern>
         </defs>
-        <rect x={centerX - viewWidth / 2} y={centerY - viewHeight / 2} width={viewWidth} height={viewHeight} fill="url(#grid)" />
+        <rect className="cad-grid-bg" x={centerX - viewWidth / 2} y={centerY - viewHeight / 2} width={viewWidth} height={viewHeight} fill="url(#grid)" />
 
         {visibleShapes.map((shape) => {
           const color = layerMap.get(shape.layer)?.color ?? 'var(--text)';
@@ -694,6 +720,7 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
           const coveragePolygon = shape.sprinklerHead
             ? computeSprinklerCoveragePolygon(shape.center, shape.radiusMm, sprinklerObstacles, shape.id)
             : null;
+          const circleFillOpacity = category === 'column' ? 0.35 : 0.08;
 
           return (
             <g key={shape.id} opacity={opacity} pointerEvents="none">
@@ -701,7 +728,7 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
                 <polygon
                   points={coveragePolygon.map((p) => `${p.x},${p.y}`).join(' ')}
                   fill={color}
-                  fillOpacity={0.08}
+                  fillOpacity={circleFillOpacity}
                   stroke={isSelected ? 'var(--primary)' : color}
                   strokeWidth={isSelected ? 30 : 18}
                   strokeLinejoin="round"
@@ -713,14 +740,11 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
                   cy={shape.center.y}
                   r={shape.radiusMm}
                   fill={color}
-                  fillOpacity={0.08}
+                  fillOpacity={circleFillOpacity}
                   stroke={isSelected ? 'var(--primary)' : color}
                   strokeWidth={isSelected ? 30 : 18}
                   strokeDasharray={category === 'sprinkler' ? '60 40' : undefined}
                 />
-              )}
-              {category === 'column' && (
-                <circle cx={shape.center.x} cy={shape.center.y} r={shape.radiusMm} fill={color} />
               )}
               {shape.sprinklerHead && (
                 <circle cx={shape.center.x} cy={shape.center.y} r={CENTER_DOT_RADIUS} fill={color} />
@@ -748,7 +772,7 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
           <line x1={pendingPoint.x} y1={pendingPoint.y - 180} x2={pendingPoint.x} y2={pendingPoint.y + 180} />
           <circle cx={pendingPoint.x} cy={pendingPoint.y} r={120} />
           <text x={pendingPoint.x + 220} y={pendingPoint.y - 220}>
-            {mode === 'line' ? '시작점' : mode === 'text' ? '텍스트 위치' : '중심점'}
+            {mode === 'line' ? '시작점' : mode === 'text' ? '텍스트 위치' : drawPreviewKind === 'rect' ? '좌상단 시작점' : '중심점'}
           </text>
         </g>
 
@@ -767,12 +791,15 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
             );
           }
           if (drawPreviewKind === 'rect') {
-            const w = Math.abs(drawPreview.x - pendingPoint.x) * 2;
-            const h = Math.abs(drawPreview.y - pendingPoint.y) * 2;
+            // pendingPoint(시작점)와 drawPreview(커서 지점)를 사각형의 마주보는 두 꼭짓점으로 삼는다
+            const w = Math.abs(drawPreview.x - pendingPoint.x);
+            const h = Math.abs(drawPreview.y - pendingPoint.y);
+            const x = Math.min(pendingPoint.x, drawPreview.x);
+            const y = Math.min(pendingPoint.y, drawPreview.y);
             return (
               <g className="cad-draw-preview" pointerEvents="none">
-                <rect x={pendingPoint.x - w / 2} y={pendingPoint.y - h / 2} width={w} height={h} />
-                <text x={pendingPoint.x} y={pendingPoint.y - h / 2 - 100} textAnchor="middle">
+                <rect x={x} y={y} width={w} height={h} />
+                <text x={x + w / 2} y={y - 100} textAnchor="middle">
                   {formatMeters(w)} × {formatMeters(h)}
                 </text>
               </g>

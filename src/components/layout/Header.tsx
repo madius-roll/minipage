@@ -1,14 +1,16 @@
 import Button from '../ui/Button';
-import { IconBook, IconLogOut, IconUser } from '../ui/Icon';
+import { IconBook, IconDownload, IconLogOut, IconUser } from '../ui/Icon';
 import { useAuth } from '../auth/AuthContext';
 import './Header.css';
 
 interface HeaderProps {
   onOpenGuide?: () => void;
+  onExportPdf?: () => void;
+  exportingPdf?: boolean;
 }
 
-/** 상단 헤더 — 로고, 법령 가이드 진입, 프로필/로그아웃 */
-export default function Header({ onOpenGuide }: HeaderProps) {
+/** 상단 헤더 — 로고, 법령 가이드 진입, PDF 저장, 프로필/로그아웃 */
+export default function Header({ onOpenGuide, onExportPdf, exportingPdf }: HeaderProps) {
   const { user, logout } = useAuth();
 
   return (
@@ -24,6 +26,9 @@ export default function Header({ onOpenGuide }: HeaderProps) {
       <div className="header-actions">
         <Button variant="ghost" size="sm" icon={<IconBook />} onClick={onOpenGuide} disabled={!onOpenGuide}>
           법령 가이드
+        </Button>
+        <Button variant="ghost" size="sm" icon={<IconDownload />} onClick={onExportPdf} disabled={!onExportPdf || exportingPdf}>
+          {exportingPdf ? 'PDF 저장 중…' : 'PDF 저장'}
         </Button>
 
         <div className="header-profile">

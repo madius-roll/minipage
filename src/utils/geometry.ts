@@ -1,4 +1,4 @@
-import type { LineShape, Point, Shape } from '../types/cad';
+import type { LineShape, Point, RectShape, Shape } from '../types/cad';
 
 /**
  * 시작점 기준 길이(mm)와 각도(도, 0°=오른쪽·반시계 방향 증가)로
@@ -264,6 +264,23 @@ function buildLinePiece(original: LineShape, s: Point, e: Point): LineShape {
   return { ...original, id: genId('line'), start: s, end: e, lengthMm, angleDeg };
 }
 
+/** 사각형의 네 변을 독립된 선 도형으로 분해한다 (TR로 사각형 한 변만 잘라낼 때 사용) */
+export function rectToLineEdges(rect: RectShape): LineShape[] {
+  const hw = rect.widthMm / 2;
+  const hh = rect.heightMm / 2;
+  const corners: Point[] = [
+    { x: rect.center.x - hw, y: rect.center.y - hh },
+    { x: rect.center.x + hw, y: rect.center.y - hh },
+    { x: rect.center.x + hw, y: rect.center.y + hh },
+    { x: rect.center.x - hw, y: rect.center.y + hh },
+  ];
+  return corners.map((start, i) => {
+    const end = corners[(i + 1) % corners.length];
+    const { lengthMm, angleDeg } = lengthAndAngleBetween(start, end);
+    return { id: genId('line'), layer: rect.layer, kind: 'line' as const, start, end, lengthMm, angleDeg };
+  });
+}
+
 export interface TrimResult {
   removedId: string;
   kept: LineShape[];
@@ -339,6 +356,13 @@ function segmentPolygonIntersections(a: Point, b: Point, corners: Point[]): Poin
 const SPRINKLER_COVERAGE_RAYS = 120;
 
 /**
+ * 중심점이 장애물 경계에 딱 붙어 있거나 걸쳐 있을 때, 그 경계 자신과의 거리 0에 가까운
+ * "닿음" 교차점까지 장애물로 세면 모든 방향이 반경 0으로 무너져 원이 아예 안 보이게 된다.
+ * 이 오차 이내의 교차점은 무시하고, 그 방향의 진짜(더 먼) 장애물이나 반경 끝까지 뻗도록 한다.
+ */
+const RAY_SELF_TOUCH_EPSILON_MM = 2;
+
+/**
  * SP헤드반경(스프링클러 방호범위) 원이 벽체/기둥 장애물에 가로막힌 만큼 안쪽으로 당겨진
  * 다각형 좌표를 계산한다. 장애물이 없는 방향은 원래 반지름까지 그대로 뻗는다.
  * obstacles에는 장애물로 취급할 도형(벽체 선, 기둥 원/사각형)만 넘긴다.
@@ -372,20 +396,18 @@ export function computeSprinklerCoveragePolygon(
     const rayEnd = { x: center.x + dirX * radiusMm, y: center.y + dirY * radiusMm };
 
     let nearest = radiusMm;
+    const consider = (p: Point) => {
+      const d = distanceMm(center, p);
+      if (d > RAY_SELF_TOUCH_EPSILON_MM) nearest = Math.min(nearest, d);
+    };
     for (const quad of quads) {
-      for (const p of segmentPolygonIntersections(center, rayEnd, quad)) {
-        nearest = Math.min(nearest, distanceMm(center, p));
-      }
+      for (const p of segmentPolygonIntersections(center, rayEnd, quad)) consider(p);
     }
     for (const c of circles) {
-      for (const p of segmentCircleIntersections(center, rayEnd, c.center, c.radius)) {
-        nearest = Math.min(nearest, distanceMm(center, p));
-      }
+      for (const p of segmentCircleIntersections(center, rayEnd, c.center, c.radius)) consider(p);
     }
     for (const r of rects) {
-      for (const p of segmentRectIntersections(center, rayEnd, r.center, r.widthMm, r.heightMm)) {
-        nearest = Math.min(nearest, distanceMm(center, p));
-      }
+      for (const p of segmentRectIntersections(center, rayEnd, r.center, r.widthMm, r.heightMm)) consider(p);
     }
 
     points.push({ x: center.x + dirX * nearest, y: center.y + dirY * nearest });

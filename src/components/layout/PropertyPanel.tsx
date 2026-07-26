@@ -46,7 +46,6 @@ export default function PropertyPanel({
           <button type="button" className="property-action-btn property-action-danger" onClick={onDeleteSelected} aria-label="삭제">
             <IconTrash />
           </button>
-          {single && <span className="property-id">{single.id}</span>}
         </div>
       </div>
 

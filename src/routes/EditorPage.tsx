@@ -11,6 +11,7 @@ import { dummyLayers, dummyShapes } from '../data/dummyDrawing';
 import { ALL_LAYERS_ID, LAYER_COLOR_PALETTE, MAX_LAYERS } from '../data/layerMeta';
 import type { Layer, LayerCategory, LineShape, Point, Shape } from '../types/cad';
 import { distanceMm, genId, lengthAndAngleBetween, pointFromPolar, translateShape } from '../utils/geometry';
+import { exportDrawingAsPdf } from '../utils/exportPdf';
 import './EditorPage.css';
 
 const ORIGIN: Point = { x: 0, y: 0 };
@@ -37,6 +38,7 @@ export default function EditorPage() {
   const [mergeMode, setMergeMode] = useState(false);
   const [mergeSelection, setMergeSelection] = useState<string[]>([]);
   const [guideOpen, setGuideOpen] = useState(false);
+  const [exportingPdf, setExportingPdf] = useState(false);
   const [clipboard, setClipboard] = useState<Shape[]>([]);
   const [mobileSheetOpen, setMobileSheetOpen] = useState(false);
   const [history, setHistory] = useState<Shape[][]>([]);
@@ -166,10 +168,12 @@ export default function EditorPage() {
     setSelectedIds([id]);
   };
 
-  const handleAddRect = (widthMm: number, heightMm: number) => {
+  /** 사각형은 좌상단 꼭짓점(pendingPoint)에서 시작해 오른쪽·아래쪽으로 뻗어나간다 — center 파라미터를 넘기면(마우스 두 번 클릭) 대신 그 중심을 쓴다 */
+  const handleAddRect = (widthMm: number, heightMm: number, center?: Point) => {
     pushHistory();
     const id = genId('rect');
-    setShapes((prev) => [...prev, { id, layer: activeLayerId, kind: 'rect', center: pendingPoint, widthMm, heightMm }]);
+    const resolvedCenter = center ?? { x: pendingPoint.x + widthMm / 2, y: pendingPoint.y + heightMm / 2 };
+    setShapes((prev) => [...prev, { id, layer: activeLayerId, kind: 'rect', center: resolvedCenter, widthMm, heightMm }]);
     setSelectedIds([id]);
   };
 
@@ -200,9 +204,13 @@ export default function EditorPage() {
       }
     } else if (drawMode === 'circle') {
       if (canPickRectShape && drawForm.columnShape === 'rect') {
-        const widthMm = Math.round(Math.abs(point.x - pendingPoint.x) * 2);
-        const heightMm = Math.round(Math.abs(point.y - pendingPoint.y) * 2);
-        if (widthMm > 0 && heightMm > 0) handleAddRect(widthMm, heightMm);
+        // 첫 클릭(pendingPoint)과 두 번째 클릭(point)을 사각형의 마주보는 두 꼭짓점으로 삼는다 (중심점 기준 대칭 확장이 아님)
+        const widthMm = Math.round(Math.abs(point.x - pendingPoint.x));
+        const heightMm = Math.round(Math.abs(point.y - pendingPoint.y));
+        if (widthMm > 0 && heightMm > 0) {
+          const center = { x: (pendingPoint.x + point.x) / 2, y: (pendingPoint.y + point.y) / 2 };
+          handleAddRect(widthMm, heightMm, center);
+        }
       } else {
         const radiusMm = Math.round(distanceMm(pendingPoint, point));
         if (radiusMm > 0) handleAddCircle(radiusMm);
@@ -230,6 +238,21 @@ export default function EditorPage() {
     setPendingPoint(ORIGIN);
     setDrawPhase('start');
     canvasRef.current?.centerOnOrigin();
+  };
+
+  const handleExportPdf = async () => {
+    const svg = canvasRef.current?.getSvgElement();
+    if (!svg || shapes.length === 0 || exportingPdf) return;
+    setExportingPdf(true);
+    try {
+      const dateStamp = new Date().toISOString().slice(0, 10);
+      await exportDrawingAsPdf(svg, shapes, `도면_${dateStamp}.pdf`);
+    } catch (err) {
+      window.alert('PDF 저장에 실패했어요. 다시 시도해 주세요.');
+      console.error(err);
+    } finally {
+      setExportingPdf(false);
+    }
   };
 
   const handleUndo = () => {
@@ -352,7 +375,7 @@ export default function EditorPage() {
 
   return (
     <div className="app-shell" data-mobile-sheet={mobileSheetOpen ? 'open' : 'closed'}>
-      <Header onOpenGuide={() => setGuideOpen(true)} />
+      <Header onOpenGuide={() => setGuideOpen(true)} onExportPdf={handleExportPdf} exportingPdf={exportingPdf} />
 
       <MobileLayerStrip
         layers={layers}

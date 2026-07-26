@@ -124,6 +124,7 @@ export default function ToolPanel({
   const isBeam = activeLayer?.category === 'beam';
   const canPickRectShape = supportsRectShape(activeLayer?.category);
   const allowedModes = getAllowedDrawModes(activeLayer?.category);
+  const isRectMode = mode === 'circle' && canPickRectShape && columnShape === 'rect';
 
   const length = parseFloat(lengthMm);
   const angle = parseFloat(angleDeg);
@@ -206,12 +207,12 @@ export default function ToolPanel({
       </div>
 
       <p className="tool-pending-point">
-        {mode === 'line' ? '시작점' : mode === 'text' ? '텍스트 위치' : '중심점'}: ({pendingPoint.x}, {pendingPoint.y}) mm
+        {mode === 'line' ? '시작점' : mode === 'text' ? '텍스트 위치' : isRectMode ? '좌상단 시작점' : '중심점'}: ({pendingPoint.x}, {pendingPoint.y}) mm
         <button type="button" className="tool-pending-reset" onClick={onResetPending}>
           원점으로
         </button>
       </p>
-      <p className="tool-hint">캔버스를 클릭해 {mode === 'line' ? '시작점' : mode === 'text' ? '텍스트 위치' : '중심점'}을 바꿀 수 있어요.</p>
+      <p className="tool-hint">캔버스를 클릭해 {mode === 'line' ? '시작점' : mode === 'text' ? '텍스트 위치' : isRectMode ? '좌상단 시작점' : '중심점'}을 바꿀 수 있어요.</p>
 
       {mode !== 'text' && (
         <>
@@ -228,8 +229,8 @@ export default function ToolPanel({
           {drawArmed && (
             <p className="tool-hint">
               {drawPhase === 'start'
-                ? `캔버스를 클릭해 ${mode === 'line' ? '시작점' : '중심점'}을 찍으세요.`
-                : `캔버스에서 ${mode === 'line' ? '끝점' : '반지름 지점'}을 클릭하면 바로 그려져요. (Esc: 취소)`}
+                ? `캔버스를 클릭해 ${mode === 'line' ? '시작점' : isRectMode ? '좌상단 시작점' : '중심점'}을 찍으세요.`
+                : `캔버스에서 ${mode === 'line' ? '끝점' : isRectMode ? '반대쪽 꼭짓점' : '반지름 지점'}을 클릭하면 바로 그려져요. (Esc: 취소)`}
             </p>
           )}
         </>
@@ -311,7 +312,7 @@ export default function ToolPanel({
       <div className="tool-session-actions">
         {!isAllLayers && (
           <Button size="sm" variant="ghost" onClick={onUndo} disabled={!canUndo} className="tool-undo">
-            마지막 도형 실행 취소
+            이전으로
           </Button>
         )}
         <Button size="sm" variant="ghost" onClick={onClearAll} disabled={!canClearAll} className="tool-clear-all">

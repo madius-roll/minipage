@@ -49,4 +49,13 @@ export interface TextShape extends BaseShape {
   text: string;
 }
 
-export type Shape = LineShape | CircleShape | RectShape | TextShape;
+/** TR로 원을 트림하면 남는 호(弧) — 다른 각도 표기와 동일하게 0°=오른쪽, 반시계 방향 증가. endAngleDeg > startAngleDeg이며 360을 넘을 수 있다(둘레를 넘지 않는 범위 안에서) */
+export interface ArcShape extends BaseShape {
+  kind: 'arc';
+  center: Point;
+  radiusMm: number;
+  startAngleDeg: number;
+  endAngleDeg: number;
+}
+
+export type Shape = LineShape | CircleShape | RectShape | TextShape | ArcShape;

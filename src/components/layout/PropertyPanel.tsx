@@ -1,5 +1,5 @@
 import { useState, type KeyboardEvent } from 'react';
-import type { CircleShape, LineShape, RectShape, Shape, TextShape } from '../../types/cad';
+import type { ArcShape, CircleShape, LineShape, RectShape, Shape, TextShape } from '../../types/cad';
 import { IconClipboard, IconCopy, IconTrash } from '../ui/Icon';
 import './panels.css';
 import './PropertyPanel.css';
@@ -56,6 +56,8 @@ export default function PropertyPanel({
           <CircleFields key={single.id} shape={single} onUpdateCircle={onUpdateCircle} />
         ) : single.kind === 'rect' ? (
           <RectFields key={single.id} shape={single} onUpdateRect={onUpdateRect} />
+        ) : single.kind === 'arc' ? (
+          <ArcFields key={single.id} shape={single} />
         ) : (
           <TextFields key={single.id} shape={single} onUpdateText={onUpdateText} />
         )
@@ -170,6 +172,22 @@ function RectFields({ shape, onUpdateRect }: { shape: RectShape; onUpdateRect: P
           <span className="property-static">{shape.label}</span>
         </div>
       )}
+    </div>
+  );
+}
+
+/** TR로 원을 트림하면 남는 호 — 각도까지 편집할 수 있게 만들 정도는 아니라 값만 보여준다 */
+function ArcFields({ shape }: { shape: ArcShape }) {
+  return (
+    <div className="property-grid">
+      <div className="field">
+        <label>중심</label>
+        <span className="property-static">({shape.center.x}, {shape.center.y}) mm</span>
+      </div>
+      <div className="field">
+        <label>반지름</label>
+        <span className="property-static">{shape.radiusMm} mm</span>
+      </div>
     </div>
   );
 }

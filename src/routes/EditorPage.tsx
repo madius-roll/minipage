@@ -9,7 +9,7 @@ import MobileSheetHandle from '../components/layout/MobileSheetHandle';
 import MobileLayerStrip from '../components/layout/MobileLayerStrip';
 import { dummyLayers, dummyShapes } from '../data/dummyDrawing';
 import { ALL_LAYERS_ID, LAYER_COLOR_PALETTE, MAX_LAYERS } from '../data/layerMeta';
-import type { Layer, LayerCategory, LineShape, Point, Shape } from '../types/cad';
+import type { ArcShape, Layer, LayerCategory, LineShape, Point, Shape } from '../types/cad';
 import { distanceMm, genId, lengthAndAngleBetween, pointFromPolar, translateShape } from '../utils/geometry';
 import { exportDrawingAsPdf } from '../utils/exportPdf';
 import './EditorPage.css';
@@ -282,7 +282,7 @@ export default function EditorPage() {
     setShapes((prev) => prev.map((s) => (ids.includes(s.id) ? translateShape(s, dx, dy) : s)));
   };
 
-  const handleTrimLine = (removedId: string, kept: LineShape[]) => {
+  const handleTrimLine = (removedId: string, kept: (LineShape | ArcShape)[]) => {
     pushHistory();
     setShapes((prev) => [...prev.filter((s) => s.id !== removedId), ...kept]);
     setSelectedIds([]);

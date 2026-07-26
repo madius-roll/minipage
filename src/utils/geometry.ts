@@ -1,4 +1,4 @@
-import type { LineShape, Point, RectShape, Shape } from '../types/cad';
+import type { ArcShape, CircleShape, LineShape, Point, RectShape, Shape } from '../types/cad';
 
 /**
  * 시작점 기준 길이(mm)와 각도(도, 0°=오른쪽·반시계 방향 증가)로
@@ -95,6 +95,15 @@ export function getShapeBounds(shape: Shape): Bounds {
       maxX: shape.position.x + width / 2,
       minY: shape.position.y - height / 2,
       maxY: shape.position.y + height / 2,
+    };
+  }
+  if (shape.kind === 'arc') {
+    // 호가 그리는 실제 범위보다 넉넉하게(전체 원 기준) 잡는다 — 뷰포트 맞춤/마퀴 선택 용도라 정확할 필요는 없다
+    return {
+      minX: shape.center.x - shape.radiusMm,
+      maxX: shape.center.x + shape.radiusMm,
+      minY: shape.center.y - shape.radiusMm,
+      maxY: shape.center.y + shape.radiusMm,
     };
   }
   return {
@@ -217,16 +226,39 @@ export function segmentCircleIntersections(a: Point, b: Point, center: Point, ra
   return pts;
 }
 
-/** 선분과 축정렬 사각형(중심+가로/세로) 네 변의 교차점 */
-export function segmentRectIntersections(a: Point, b: Point, center: Point, widthMm: number, heightMm: number): Point[] {
+/** 두 원 둘레의 교차점 (0~2개) */
+export function circleCircleIntersections(c1: Point, r1: number, c2: Point, r2: number): Point[] {
+  const dx = c2.x - c1.x;
+  const dy = c2.y - c1.y;
+  const d = Math.hypot(dx, dy);
+  if (d === 0 || d > r1 + r2 || d < Math.abs(r1 - r2)) return [];
+  const a = (r1 * r1 - r2 * r2 + d * d) / (2 * d);
+  const hSq = r1 * r1 - a * a;
+  if (hSq < 0) return [];
+  const h = Math.sqrt(Math.max(0, hSq));
+  const xm = c1.x + (a * dx) / d;
+  const ym = c1.y + (a * dy) / d;
+  if (h === 0) return [{ x: xm, y: ym }];
+  const rx = -dy * (h / d);
+  const ry = dx * (h / d);
+  return [{ x: xm + rx, y: ym + ry }, { x: xm - rx, y: ym - ry }];
+}
+
+/** 축정렬 사각형(중심+가로/세로)의 네 꼭짓점 (좌상단부터 시계 방향) */
+function rectCorners(center: Point, widthMm: number, heightMm: number): Point[] {
   const hw = widthMm / 2;
   const hh = heightMm / 2;
-  const corners: Point[] = [
+  return [
     { x: center.x - hw, y: center.y - hh },
     { x: center.x + hw, y: center.y - hh },
     { x: center.x + hw, y: center.y + hh },
     { x: center.x - hw, y: center.y + hh },
   ];
+}
+
+/** 선분과 축정렬 사각형(중심+가로/세로) 네 변의 교차점 */
+export function segmentRectIntersections(a: Point, b: Point, center: Point, widthMm: number, heightMm: number): Point[] {
+  const corners = rectCorners(center, widthMm, heightMm);
   const pts: Point[] = [];
   for (let i = 0; i < 4; i++) {
     const p = segmentIntersection(a, b, corners[i], corners[(i + 1) % 4]);
@@ -258,6 +290,48 @@ export function getLineCutParams(line: LineShape, others: Shape[]): number[] {
   return Array.from(ts).sort((x, y) => x - y);
 }
 
+/** 각도를 [0, 360) 범위로 정규화 */
+export function normalizeAngle(deg: number): number {
+  const a = deg % 360;
+  return a < 0 ? a + 360 : a;
+}
+
+/** center에서 p를 바라보는 각도(도) — pointFromPolar/lengthAndAngleBetween과 동일 규약(0°=오른쪽, 반시계 증가) */
+export function pointAngleDeg(center: Point, p: Point): number {
+  return normalizeAngle((Math.atan2(-(p.y - center.y), p.x - center.x) * 180) / Math.PI);
+}
+
+/** angleDeg가 [startAngleDeg, endAngleDeg] 호 구간(반시계, endAngleDeg가 360을 넘을 수 있음) 안에 있는지 */
+export function isAngleWithinArc(angleDeg: number, startAngleDeg: number, endAngleDeg: number): boolean {
+  const sweep = endAngleDeg - startAngleDeg;
+  const rel = normalizeAngle(angleDeg - startAngleDeg);
+  return rel <= sweep;
+}
+
+/**
+ * circle(center, radiusMm)이 다른 도형들과 교차하는 지점들을 각도(도, [0,360))로, 오름차순 중복 없이 반환한다.
+ * line이 0/1 경계를 강제로 포함하는 것과 달리 원은 닫힌 곡선이라 자연스러운 경계가 없으므로 교차점만 모은다.
+ */
+export function getCircleCutAngles(center: Point, radiusMm: number, selfId: string, others: Shape[]): number[] {
+  const angles = new Set<number>();
+  const addPoint = (p: Point) => angles.add(Math.round(pointAngleDeg(center, p) * 100) / 100);
+
+  for (const other of others) {
+    if (other.id === selfId) continue;
+    if (other.kind === 'line') {
+      for (const p of segmentCircleIntersections(other.start, other.end, center, radiusMm)) addPoint(p);
+    } else if (other.kind === 'rect') {
+      const corners = rectCorners(other.center, other.widthMm, other.heightMm);
+      for (let i = 0; i < 4; i++) {
+        for (const p of segmentCircleIntersections(corners[i], corners[(i + 1) % 4], center, radiusMm)) addPoint(p);
+      }
+    } else if (other.kind === 'circle') {
+      for (const p of circleCircleIntersections(center, radiusMm, other.center, other.radiusMm)) addPoint(p);
+    }
+  }
+  return Array.from(angles).sort((a, b) => a - b);
+}
+
 function buildLinePiece(original: LineShape, s: Point, e: Point): LineShape {
   const lengthMm = Math.round(distanceMm(s, e));
   const angleDeg = Math.round((Math.atan2(-(e.y - s.y), e.x - s.x) * 180) / Math.PI * 100) / 100;
@@ -266,14 +340,7 @@ function buildLinePiece(original: LineShape, s: Point, e: Point): LineShape {
 
 /** 사각형의 네 변을 독립된 선 도형으로 분해한다 (TR로 사각형 한 변만 잘라낼 때 사용) */
 export function rectToLineEdges(rect: RectShape): LineShape[] {
-  const hw = rect.widthMm / 2;
-  const hh = rect.heightMm / 2;
-  const corners: Point[] = [
-    { x: rect.center.x - hw, y: rect.center.y - hh },
-    { x: rect.center.x + hw, y: rect.center.y - hh },
-    { x: rect.center.x + hw, y: rect.center.y + hh },
-    { x: rect.center.x - hw, y: rect.center.y + hh },
-  ];
+  const corners = rectCorners(rect.center, rect.widthMm, rect.heightMm);
   return corners.map((start, i) => {
     const end = corners[(i + 1) % corners.length];
     const { lengthMm, angleDeg } = lengthAndAngleBetween(start, end);
@@ -283,7 +350,7 @@ export function rectToLineEdges(rect: RectShape): LineShape[] {
 
 export interface TrimResult {
   removedId: string;
-  kept: LineShape[];
+  kept: (LineShape | ArcShape)[];
 }
 
 /** 최소 조각 길이(mm) — 이보다 짧게 남는 조각은 버린다(부동소수점 오차로 생기는 0에 가까운 조각 방지) */
@@ -325,6 +392,47 @@ export function trimLineAtPoint(line: LineShape, clickPoint: Point, others: Shap
     if (distanceMm(segStart, end) >= TRIM_MIN_PIECE_MM) kept.push(buildLinePiece(line, segStart, end));
   }
   return { removedId: line.id, kept };
+}
+
+/** 트림 후 남는 호의 최소 길이(mm) — TRIM_MIN_PIECE_MM과 동일한 이유로 존재 */
+const ARC_MIN_LENGTH_MM = 10;
+
+/**
+ * clickPoint 근처의 circle을, 다른 도형들과의 교차 지점을 기준으로 트림해 호(arc) 하나로 만든다.
+ * 원은 닫힌 곡선이라 line과 달리 "클릭 지점을 감싸는 두 교차각" 사이 구간을 지우고, 나머지 전체를 호 하나로 남긴다.
+ * 교차각이 2개 미만이면(자를 게 없음) null을 반환한다.
+ */
+export function trimCircleAtPoint(circle: CircleShape, clickPoint: Point, others: Shape[]): TrimResult | null {
+  const angles = getCircleCutAngles(circle.center, circle.radiusMm, circle.id, others);
+  if (angles.length < 2) return null;
+
+  const clickAngle = pointAngleDeg(circle.center, clickPoint);
+  // clickAngle을 기준으로, 반시계 방향(양수)으로 가장 가까운 교차각(upper)과 시계 방향(음수)으로 가장 가까운 교차각(lower)을 찾는다.
+  let upper = Infinity;
+  let lower = -Infinity;
+  for (const a of angles) {
+    const rel = normalizeAngle(a - clickAngle);
+    if (rel < upper) upper = rel;
+    if (rel - 360 > lower) lower = rel - 360;
+  }
+
+  // [clickAngle+lower, clickAngle+upper] 구간(클릭 지점을 감싼 부분)을 지우고, 나머지 전체를 호 하나로 남긴다.
+  const keptStart = normalizeAngle(clickAngle + upper);
+  const sweep = 360 - (upper - lower);
+  if (sweep <= 0) return null;
+  const arcLengthMm = (sweep / 360) * 2 * Math.PI * circle.radiusMm;
+  if (arcLengthMm < ARC_MIN_LENGTH_MM) return null;
+
+  const kept: ArcShape[] = [{
+    id: genId('arc'),
+    layer: circle.layer,
+    kind: 'arc',
+    center: circle.center,
+    radiusMm: circle.radiusMm,
+    startAngleDeg: keptStart,
+    endAngleDeg: keptStart + sweep,
+  }];
+  return { removedId: circle.id, kept };
 }
 
 /** 두께 있는 선(벽체)을 감싸는 사각형의 네 꼭짓점 */

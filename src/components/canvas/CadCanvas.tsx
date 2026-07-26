@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
-import type { Layer, LineShape, Point, RectShape, Shape } from '../../types/cad';
+import type { ArcShape, CircleShape, Layer, LineShape, Point, RectShape, Shape } from '../../types/cad';
 import {
   boundsIntersect,
   computeSprinklerCoveragePolygon,
@@ -12,16 +12,19 @@ import {
   getBounds,
   getShapeBounds,
   getShapeVertices,
+  isAngleWithinArc,
   lerpPoint,
   nearestPointOnCircle,
+  pointAngleDeg,
   pointFromPolar,
   rectToLineEdges,
   translateShape,
+  trimCircleAtPoint,
   trimLineAtPoint,
 } from '../../utils/geometry';
 import { ALL_LAYERS_ID } from '../../data/layerMeta';
 import type { DrawMode } from '../layout/ToolPanel';
-import { IconFit, IconTarget, IconTrash, IconTrim, IconUndo, IconZoomIn, IconZoomOut } from '../ui/Icon';
+import { IconFit, IconTarget, IconTrash, IconUndo, IconZoomIn, IconZoomOut } from '../ui/Icon';
 import './CadCanvas.css';
 
 interface CadCanvasProps {
@@ -40,8 +43,8 @@ interface CadCanvasProps {
   activeLayerId: string;
   onDeleteSelected: () => void;
   onResetPending: () => void;
-  /** TR(트림): removedId 선을 지우고 kept 조각들로 대체 */
-  onTrimLine: (removedId: string, kept: LineShape[]) => void;
+  /** TR(트림): removedId 도형을 지우고 kept 조각들(선/호)로 대체 */
+  onTrimLine: (removedId: string, kept: (LineShape | ArcShape)[]) => void;
   /** 마우스로 직접 그리기 무장 상태 — 켜져 있으면 캔버스 클릭으로 시작점→끝점을 순서대로 찍어 도형을 완성한다 */
   drawArmed: boolean;
   /** 무장 상태에서 다음 클릭이 시작점을 찍는 차례인지, 끝점을 찍어 도형을 완성하는 차례인지 */
@@ -316,6 +319,11 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
         const dy = Math.abs(mm.y - shape.position.y);
         hit = dx <= width / 2 + tolerance && dy <= height / 2 + tolerance;
         size = width * height;
+      } else if (shape.kind === 'arc') {
+        const dist = Math.hypot(mm.x - shape.center.x, mm.y - shape.center.y);
+        const angle = pointAngleDeg(shape.center, mm);
+        hit = Math.abs(dist - shape.radiusMm) <= tolerance && isAngleWithinArc(angle, shape.startAngleDeg, shape.endAngleDeg);
+        size = shape.radiusMm;
       } else {
         const dx = Math.abs(mm.x - shape.center.x);
         const dy = Math.abs(mm.y - shape.center.y);
@@ -340,12 +348,13 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
     return selectableShapes.filter((s) => boundsIntersect(rectBounds, getShapeBounds(s))).map((s) => s.id);
   };
 
-  /** TR로 클릭한 대상 — 선은 그대로, 사각형은 클릭한 변만 트림 대상 선으로 분해해 다룬다 (원은 대상에서 제외) */
+  /** TR로 클릭한 대상 — 선은 그대로, 사각형은 클릭한 변만 트림 대상 선으로 분해해 다루고, 원은 둘레를 호(arc) 하나로 잘라낸다 */
   type TrimTarget =
     | { kind: 'line'; shape: LineShape }
-    | { kind: 'rectEdge'; rect: RectShape; edges: LineShape[]; edgeIndex: number };
+    | { kind: 'rectEdge'; rect: RectShape; edges: LineShape[]; edgeIndex: number }
+    | { kind: 'circle'; shape: CircleShape };
 
-  /** TR 모드 전용: 레이어 구분 없이(활성 레이어 제한 무시) 클릭 지점에서 가장 가까운 선/사각형 변을 찾는다 */
+  /** TR 모드 전용: 레이어 구분 없이(활성 레이어 제한 무시) 클릭 지점에서 가장 가까운 선/사각형 변/원 둘레를 찾는다 */
   const findNearestTrimTarget = (mm: Point, tolerance: number): TrimTarget | null => {
     let best: TrimTarget | null = null;
     let bestDist = Infinity;
@@ -366,6 +375,12 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
             best = { kind: 'rectEdge', rect: s, edges, edgeIndex };
           }
         });
+      } else if (s.kind === 'circle') {
+        const dist = Math.abs(distanceMm(mm, s.center) - s.radiusMm);
+        if (dist <= DEFAULT_LINE_THICKNESS_MM / 2 + tolerance && dist < bestDist) {
+          bestDist = dist;
+          best = { kind: 'circle', shape: s };
+        }
       }
     }
     return best;
@@ -414,6 +429,10 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
         const others = visibleShapes.filter((s) => s.id !== target.rect.id);
         const result = trimLineAtPoint(clickedEdge, mm, others);
         if (result) onTrimLine(target.rect.id, [...result.kept, ...otherEdges]);
+      } else if (target?.kind === 'circle') {
+        const others = visibleShapes.filter((s) => s.id !== target.shape.id);
+        const result = trimCircleAtPoint(target.shape, mm, others);
+        if (result) onTrimLine(result.removedId, result.kept);
       }
       return;
     }
@@ -716,6 +735,22 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
             );
           }
 
+          if (shape.kind === 'arc') {
+            // 각도 규약(0°=오른쪽, 반시계 증가)에서 SVG의 sweep-flag=1은 시계 방향이므로, 반시계로 그리려면 sweep-flag=0을 쓴다.
+            const startRad = (shape.startAngleDeg * Math.PI) / 180;
+            const endRad = (shape.endAngleDeg * Math.PI) / 180;
+            const startPt = { x: shape.center.x + shape.radiusMm * Math.cos(startRad), y: shape.center.y - shape.radiusMm * Math.sin(startRad) };
+            const endPt = { x: shape.center.x + shape.radiusMm * Math.cos(endRad), y: shape.center.y - shape.radiusMm * Math.sin(endRad) };
+            const sweepDeg = shape.endAngleDeg - shape.startAngleDeg;
+            const largeArcFlag = sweepDeg > 180 ? 1 : 0;
+            const d = `M ${startPt.x} ${startPt.y} A ${shape.radiusMm} ${shape.radiusMm} 0 ${largeArcFlag} 0 ${endPt.x} ${endPt.y}`;
+            return (
+              <g key={shape.id} opacity={opacity} pointerEvents="none">
+                <path d={d} fill="none" stroke={isSelected ? 'var(--primary)' : color} strokeWidth={isSelected ? 30 : 18} />
+              </g>
+            );
+          }
+
           const category = layerMap.get(shape.layer)?.category;
           const coveragePolygon = shape.sprinklerHead
             ? computeSprinklerCoveragePolygon(shape.center, shape.radiusMm, sprinklerObstacles, shape.id)
@@ -858,7 +893,7 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
           aria-pressed={trimMode}
           aria-label="TR (겹치는 선 잘라내기)"
         >
-          <IconTrim />
+          <span className="cad-trim-label">Tr</span>
         </button>
       </div>
 

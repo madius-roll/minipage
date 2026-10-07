@@ -1,10 +1,11 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import type { LayerCategory, Shape } from '../../types/cad';
 import { getAllowedDrawModes, type DrawFormState, type DrawMode } from './ToolPanel';
-import { IconChevronUp, IconLine, IconPlus, IconShapes, IconSprinklerRadius, IconText } from '../ui/Icon';
+import { IconChevronUp, IconCursor, IconLine, IconPlus, IconShapes, IconSprinklerRadius, IconText } from '../ui/Icon';
 import './MobileSheetHandle.css';
 
 const MODE_ICON: Record<DrawMode, ReactNode> = {
+  select: <IconCursor />,
   line: <IconLine />,
   circle: <IconShapes />,
   sprinklerHead: <IconSprinklerRadius />,
@@ -12,6 +13,7 @@ const MODE_ICON: Record<DrawMode, ReactNode> = {
 };
 
 const MODE_LABEL: Record<DrawMode, string> = {
+  select: '선택',
   line: '선 그리기',
   circle: '도형 그리기',
   sprinklerHead: 'SP헤드반경',
@@ -263,7 +265,11 @@ export default function MobileSheetHandle({
         />
       )}
 
-      {!open && !selectedShape && isDrawable && (
+      {!open && !selectedShape && isDrawable && mode === 'select' && (
+        <p className="mobile-quick-hint">도형을 탭해 선택하고, 끌어서 옮겨요.</p>
+      )}
+
+      {!open && !selectedShape && isDrawable && mode !== 'select' && (
         <form className="mobile-quick-form" onSubmit={handleQuickSubmit}>
           {mode === 'line' && (
             <>

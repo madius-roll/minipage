@@ -6,6 +6,13 @@
   overflow-y: auto;
 }
 
+/* 패널이 셋(도구·레이어·검토)이라 각자 줄어들며 따로 스크롤되면 너무 비좁다 — 사이드바 전체가 한 번에 스크롤되게 한다 */
+.editor-sidebar .panel {
+  flex-shrink: 0;
+  overflow-y: visible;
+  border-bottom: 1px solid var(--border);
+}
+
 .editor-canvas-area {
   min-width: 0;
   min-height: 0;
@@ -13,13 +20,14 @@
 }
 
 @media (max-width: 860px) {
-  /* 캔버스는 헤더+레이어 스트립 아래 화면 전체를 꽉 채운다 (하단 시트가 그 위에 겹쳐 뜬다) */
+  /* 캔버스는 헤더+레이어 스트립 아래부터 하단 손잡이 바로 위까지 채운다 (손잡이에 가려지는 만큼은 빼야 화면 맞춤이 보이는 영역 가운데로 잡힌다).
+     하단 시트를 펼치면 시트가 캔버스 위에 겹쳐 뜬다. */
   .editor-canvas-area {
     position: fixed;
     top: calc(56px + var(--mobile-strip-h));
     left: 0;
     right: 0;
-    bottom: 0;
+    bottom: calc(var(--mobile-handle-h) + env(safe-area-inset-bottom, 0px));
     height: auto;
     z-index: 1;
   }

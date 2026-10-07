@@ -1,0 +1,144 @@
+.review-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin: 0;
+}
+
+.review-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 6px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  text-align: center;
+  min-width: 0;
+}
+
+.review-stat dt {
+  font-size: 11px;
+  color: var(--sub);
+}
+
+.review-stat dd {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.review-stat dd.is-ok {
+  color: var(--primary);
+}
+
+.review-stat dd.is-warn {
+  color: var(--danger);
+}
+
+.review-hint,
+.review-disclaimer {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--sub);
+  word-break: keep-all;
+}
+
+.review-toggle {
+  justify-content: center;
+  width: 100%;
+}
+
+.review-warnings {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.review-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  width: 100%;
+  padding: 7px 8px;
+  background: rgba(241, 94, 94, 0.08);
+  border: 1px solid rgba(241, 94, 94, 0.35);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-family: var(--font-family);
+  font-size: 12px;
+  line-height: 1.45;
+  text-align: left;
+  word-break: keep-all;
+  cursor: pointer;
+}
+
+.review-warning:hover:not(:disabled) {
+  border-color: var(--danger);
+}
+
+.review-warning:disabled {
+  cursor: default;
+}
+
+.review-warning .icon {
+  width: 14px;
+  height: 14px;
+  margin-top: 1px;
+  color: var(--danger);
+}
+
+.review-ok {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 12px;
+  color: var(--sub);
+}
+
+.review-ok .icon {
+  width: 14px;
+  height: 14px;
+  color: var(--primary);
+}
+
+.review-subtitle {
+  margin-top: var(--space-1);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--sub);
+}
+
+.review-quantities {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 0;
+}
+
+.review-quantities div {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+  font-size: 12.5px;
+}
+
+.review-quantities dt {
+  color: var(--sub);
+}
+
+.review-quantities dd {
+  margin: 0;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+}

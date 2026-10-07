@@ -1,4 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import type { CSSProperties } from 'react';
 import type { ArcShape, CircleShape, Layer, LineShape, Point, RectShape, Shape } from '../../types/cad';
 import {
   boundsIntersect,
@@ -13,6 +14,7 @@ import {
   getShapeBounds,
   getShapeVertices,
   isAngleWithinArc,
+  lengthAndAngleBetween,
   lerpPoint,
   nearestPointOnCircle,
   pointAngleDeg,
@@ -24,7 +26,9 @@ import {
 } from '../../utils/geometry';
 import { ALL_LAYERS_ID } from '../../data/layerMeta';
 import type { DrawMode } from '../layout/ToolPanel';
-import { IconFit, IconTarget, IconTrash, IconUndo, IconZoomIn, IconZoomOut } from '../ui/Icon';
+import type { Bounds } from '../../utils/geometry';
+import type { MmRect } from '../../utils/review';
+import { IconFit, IconRedo, IconTarget, IconTrash, IconUndo, IconZoomIn, IconZoomOut } from '../ui/Icon';
 import './CadCanvas.css';
 
 interface CadCanvasProps {
@@ -36,10 +40,12 @@ interface CadCanvasProps {
   mode: DrawMode;
   onCanvasClick: (point: Point) => void;
   onMoveShapes: (ids: string[], dx: number, dy: number) => void;
-  /** 도형을 잡아서 드래그를 막 시작하는 순간 한 번만 호출 — 실행취소 히스토리 저장용 */
+  /** 잡은 도형이 실제로 움직이기 시작하는 순간 한 번만 호출 — 실행취소 히스토리 저장용 (클릭만 하고 놓으면 호출되지 않는다) */
   onDragStart: () => void;
   onUndo: () => void;
   canUndo: boolean;
+  onRedo: () => void;
+  canRedo: boolean;
   activeLayerId: string;
   onDeleteSelected: () => void;
   onResetPending: () => void;
@@ -53,27 +59,42 @@ interface CadCanvasProps {
   onFinishDraw: (point: Point) => void;
   /** 무장 상태에서 미리보기로 그릴 도형 종류 (기둥 레이어의 사각형 옵션 포함) */
   drawPreviewKind: 'line' | 'circle' | 'rect';
+  /** 직교 고정 — 켜져 있거나 Shift를 누른 채로 그리면 선은 0°/45°/90° 방향, 사각형은 정사각형으로 맞춘다 */
+  orthoLock: boolean;
+  /** 방호 검토에서 계산한 미방호 구역(mm) — 빈 배열이면 표시하지 않는다 */
+  uncoveredRects: MmRect[];
 }
 
 export interface CadCanvasHandle {
   /** 원점(0,0)이 화면 정중앙에 오도록 이동(줌 배율은 유지) */
   centerOnOrigin: () => void;
-  /** PDF 내보내기 등에서 현재 캔버스 SVG 엘리먼트를 그대로 읽어가기 위한 접근자 */
-  getSvgElement: () => SVGSVGElement | null;
 }
 
 const GRID_MM = 500;
+/** 격자 한 칸이 화면에서 이보다 촘촘해지면 10배 큰 격자로 바꾼다 */
+const MIN_GRID_PX = 8;
 const CENTER_DOT_RADIUS = 40;
 const CLICK_TOLERANCE_PX = 10;
 const SNAP_TOLERANCE_PX = 18;
 /** 스냅 상태에서 떨어져 나갈 때는 더 작은 허용오차를 써서 더 빨리 분리되게 한다 */
 const SNAP_RELEASE_TOLERANCE_PX = 6;
-/** 선 길이 표기 라벨을 선분에서 얼마나 띄울지(mm) */
-const LENGTH_LABEL_OFFSET_MM = 150;
-/** 원 반지름 표기 라벨을 원 둘레에서 얼마나 더 띄울지(mm) */
-const RADIUS_LABEL_MARGIN_MM = 220;
-/** 선분 위 배치 가이드 점(양끝/중점/사분점) 반지름(mm) */
-const GUIDE_DOT_RADIUS = 34;
+/*
+ * 라벨·가이드 점·외곽선 굵기는 도면(mm)이 아니라 화면(px) 기준으로 그린다.
+ * 그래야 축소해도 글자가 읽히고, 확대해도 글자가 화면을 뒤덮지 않는다. 아래 값들은 모두 화면 px이다.
+ */
+/** 이름·치수 라벨을 도형 위아래로 띄우는 거리 */
+const LABEL_GAP_PX = 11;
+/** 선 길이 라벨을 선에서 옆으로 띄우는 거리 — 세로선 옆에 놓이면 글자 폭의 절반이 선 쪽으로 뻗으므로 더 넉넉히 둔다 */
+const LINE_LABEL_GAP_PX = 16;
+/** 선분 위 배치 가이드 점(양끝/중점/사분점) 반지름 */
+const GUIDE_DOT_PX = 2.5;
+/** 화면에서 이보다 짧은 선은 치수 라벨과 가이드 점을 생략한다 (서로 겹쳐 읽을 수 없게 된다) */
+const MIN_LABELED_LINE_PX = 44;
+/** 도형 외곽선의 최소 굵기 — 실제 두께(mm)가 화면에서 이보다 가늘어지면 이 굵기로 그린다 */
+const OUTLINE_PX = 1.5;
+const SELECTED_OUTLINE_PX = 3;
+/** 직교 고정 시 맞추는 각도 간격(도) */
+const ORTHO_STEP_DEG = 45;
 /** 가이드 점을 정확히 겨냥해 클릭했을 때, 그 지점이 도형 몸체 위라도 선택보다 배치를 우선시키는 좁은 허용오차 */
 const PLACEMENT_SNAP_PRIORITY_PX = 7;
 const MARQUEE_THRESHOLD_PX = 4;
@@ -94,7 +115,7 @@ interface PinchState {
 }
 
 const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas(
-  { shapes, layers, selectedIds, onSelect, pendingPoint, mode, onCanvasClick, onMoveShapes, onDragStart, onUndo, canUndo, activeLayerId, onDeleteSelected, onResetPending, onTrimLine, drawArmed, drawPhase, onFinishDraw, drawPreviewKind },
+  { shapes, layers, selectedIds, onSelect, pendingPoint, mode, onCanvasClick, onMoveShapes, onDragStart, onUndo, canUndo, onRedo, canRedo, activeLayerId, onDeleteSelected, onResetPending, onTrimLine, drawArmed, drawPhase, onFinishDraw, drawPreviewKind, orthoLock, uncoveredRects },
   ref,
 ) {
   const svgRef = useRef<SVGSVGElement>(null);
@@ -118,16 +139,21 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
     totalDy: number;
     appliedDx: number;
     appliedDy: number;
+    historyPushed: boolean;
   } | null>(null);
   const dragSnappedRef = useRef(false);
   const marqueeRef = useRef<{ startMm: Point; moved: boolean } | null>(null);
   const panRef = useRef<{ startClientX: number; startClientY: number; startPan: Point } | null>(null);
+  /** 스페이스바를 누르고 있는 동안은 왼쪽 버튼 드래그가 화면 이동(팬)으로 동작한다 — 가운데 버튼이 없는 트랙패드용 */
+  const [spaceHeld, setSpaceHeld] = useState(false);
   const pointersRef = useRef<Map<number, Point>>(new Map());
   const pinchRef = useRef<PinchState | null>(null);
   const [snapMarker, setSnapMarker] = useState<Point | null>(null);
   const [marquee, setMarquee] = useState<{ start: Point; current: Point } | null>(null);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState<Point>({ x: 0, y: 0 });
+  /** 캔버스 영역의 화면 크기(px) — 화면 px ↔ 도면 mm 환산에 쓴다 */
+  const [canvasSize, setCanvasSize] = useState({ width: 1000, height: 700 });
   const layerMap = useMemo(() => new Map(layers.map((l) => [l.id, l])), [layers]);
   const visibleShapes = shapes.filter((s) => layerMap.get(s.layer)?.visible !== false);
   /** 클릭/드래그로 선택 가능한 도형 — "그릴 레이어"로 선택된 레이어의 도형만 (다른 레이어는 보이되 선택은 안 됨) */
@@ -137,6 +163,9 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
     const category = layerMap.get(s.layer)?.category;
     return category === 'wall' || category === 'column';
   });
+
+  /** TR에서 "자르는 날"이 되는 도형 — SP헤드반경 원은 실제 물체가 아니라 방호범위 표시라서 뺀다 (안 빼면 벽이 아닌 보이지 않는 원 둘레에서 잘린다) */
+  const trimCutters = visibleShapes.filter((s) => !(s.kind === 'circle' && s.sprinklerHead));
 
   /**
    * 뷰포트의 기준 크기/중심은 도형이 이동·추가될 때마다 다시 계산하지 않고 한 번 고정해 둔다.
@@ -163,19 +192,96 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
   const viewHeight = baseHeight / zoom;
   const centerX = baseCenterX + pan.x;
   const centerY = baseCenterY + pan.y;
+  const gridSpan = Math.max(viewWidth, viewHeight) * 6;
+  /** 화면 1px이 도면에서 몇 mm인지 — 라벨·외곽선을 화면 기준 크기로 그릴 때 곱한다 */
+  const mmPerPx = 1 / (Math.min(canvasSize.width / viewWidth, canvasSize.height / viewHeight) || 1);
+  const px = (value: number) => value * mmPerPx;
+  const gridStep = GRID_MM / mmPerPx >= MIN_GRID_PX ? GRID_MM : GRID_MM * 10;
   const viewBox = `${centerX - viewWidth / 2} ${centerY - viewHeight / 2} ${viewWidth} ${viewHeight}`;
 
   useEffect(() => {
     const svg = svgRef.current;
     if (!svg) return;
+    const measure = () => {
+      const rect = svg.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) setCanvasSize({ width: rect.width, height: rect.height });
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(svg);
+    return () => observer.disconnect();
+  }, []);
+
+  /** 휠 핸들러(한 번만 등록)가 항상 최신 줌/팬 값을 읽을 수 있게 해 주는 거울 */
+  const viewStateRef = useRef({ zoom, pan });
+  viewStateRef.current = { zoom, pan };
+
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    // 휠 줌은 커서가 가리키는 지점이 화면에서 제자리에 머물도록 팬을 함께 보정한다
     const onWheelNative = (e: WheelEvent) => {
       e.preventDefault();
+      const base = baseViewRef.current;
+      if (!base) return;
+      const { zoom: z, pan: p } = viewStateRef.current;
       const factor = e.deltaY < 0 ? WHEEL_ZOOM_STEP : 1 / WHEEL_ZOOM_STEP;
-      setZoom((z) => clamp(z * factor, MIN_ZOOM, MAX_ZOOM));
+      const nextZoom = clamp(z * factor, MIN_ZOOM, MAX_ZOOM);
+      if (nextZoom === z) return;
+      const rect = svg.getBoundingClientRect();
+      const pxPerMm = Math.min(rect.width / (base.width / z), rect.height / (base.height / z)) || 1;
+      // 화면 중심에서 커서까지의 거리(mm) — 줌 배율이 바뀐 만큼 이 거리가 줄거나 늘어나므로 그 차이를 팬으로 메운다
+      const offsetX = (e.clientX - (rect.left + rect.width / 2)) / pxPerMm;
+      const offsetY = (e.clientY - (rect.top + rect.height / 2)) / pxPerMm;
+      const keep = 1 - z / nextZoom;
+      const nextPan = { x: p.x + offsetX * keep, y: p.y + offsetY * keep };
+      viewStateRef.current = { zoom: nextZoom, pan: nextPan };
+      setZoom(nextZoom);
+      setPan(nextPan);
     };
     svg.addEventListener('wheel', onWheelNative, { passive: false });
     return () => svg.removeEventListener('wheel', onWheelNative);
   }, []);
+
+  useEffect(() => {
+    const isEditable = (target: EventTarget | null) => {
+      const el = target as HTMLElement | null;
+      return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.code !== 'Space' || isEditable(e.target)) return;
+      // 포커스가 남아 있던 버튼이 스페이스로 눌리거나 페이지가 스크롤되지 않게 막는다
+      e.preventDefault();
+      setSpaceHeld(true);
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.code !== 'Space') return;
+      if (!isEditable(e.target)) e.preventDefault();
+      setSpaceHeld(false);
+    };
+    const onBlur = () => setSpaceHeld(false);
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', onBlur);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', onBlur);
+    };
+  }, []);
+
+  // TR 모드는 Esc로 끈다 — 캡처 단계에서 먼저 받아, 같은 Esc가 그리기 취소까지 한꺼번에 일으키지 않게 한다
+  useEffect(() => {
+    if (!trimMode) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      setTrimMode(false);
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [trimMode]);
 
   const centerOnOriginNow = () => {
     const { centerX: base, centerY: baseY } = baseViewRef.current!;
@@ -184,7 +290,6 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
 
   useImperativeHandle(ref, () => ({
     centerOnOrigin: centerOnOriginNow,
-    getSvgElement: () => svgRef.current,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }), []);
 
@@ -264,7 +369,8 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
       if (s.kind === 'line') {
         candidates = [s.start, lerpPoint(s.start, s.end, 0.25), lerpPoint(s.start, s.end, 0.5), lerpPoint(s.start, s.end, 0.75), s.end];
       } else if (s.kind === 'circle') {
-        candidates = [s.center, nearestPointOnCircle(mm, s.center, s.radiusMm)];
+        // SP헤드반경의 둘레는 실제 물체가 아니라 방호범위 표시일 뿐이라 중심(헤드 위치)에만 붙인다
+        candidates = s.sprinklerHead ? [s.center] : [s.center, nearestPointOnCircle(mm, s.center, s.radiusMm)];
       } else if (s.kind === 'text') {
         candidates = [s.position];
       } else {
@@ -292,6 +398,30 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
   };
 
   /**
+   * 직교 고정: 끝점을 시작점(pendingPoint) 기준 0°/45°/90° 방향 위로 옮긴다 (사각형은 정사각형이 되게).
+   * 스냅으로 잡은 점을 그 방향에 수직으로 내려 맞추므로, 다른 도형의 꼭짓점 높이에 맞춰 수평·수직선을 그릴 수 있다.
+   */
+  const applyOrtho = (point: Point): Point => {
+    const dx = point.x - pendingPoint.x;
+    const dy = point.y - pendingPoint.y;
+    if (drawPreviewKind === 'rect') {
+      const side = Math.max(Math.abs(dx), Math.abs(dy));
+      return { x: pendingPoint.x + (dx < 0 ? -side : side), y: pendingPoint.y + (dy < 0 ? -side : side) };
+    }
+    if (drawPreviewKind !== 'line' || (dx === 0 && dy === 0)) return point;
+    const step = (ORTHO_STEP_DEG * Math.PI) / 180;
+    const angle = Math.round(Math.atan2(dy, dx) / step) * step;
+    const length = dx * Math.cos(angle) + dy * Math.sin(angle);
+    return { x: Math.round(pendingPoint.x + length * Math.cos(angle)), y: Math.round(pendingPoint.y + length * Math.sin(angle)) };
+  };
+
+  /** 끝점(두 번째 클릭) 위치 — 스냅을 먼저 적용하고, 직교 고정이 켜져 있거나 Shift를 누르고 있으면 방향을 맞춘다 */
+  const resolveEndPoint = (mm: Point, shiftKey: boolean): Point => {
+    const snapped = resolveDrawPoint(mm);
+    return orthoLock || shiftKey ? applyOrtho(snapped) : snapped;
+  };
+
+  /**
    * 겹친 도형 중 가장 "구체적인"(작은) 도형을 우선 선택한다.
    * 큰 반투명 원(스프링클러 살수반경)이 그 안의 작은 기둥을 가리지 않도록 하기 위함.
    */
@@ -311,8 +441,10 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
       } else if (shape.kind === 'circle') {
         const dist = Math.hypot(mm.x - shape.center.x, mm.y - shape.center.y);
         const isColumn = layerMap.get(shape.layer)?.category === 'column';
-        hit = isColumn ? dist <= shape.radiusMm + tolerance : dist <= CENTER_DOT_RADIUS + tolerance || Math.abs(dist - shape.radiusMm) <= tolerance;
-        size = shape.radiusMm;
+        const onCenter = dist <= CENTER_DOT_RADIUS + tolerance;
+        hit = isColumn ? dist <= shape.radiusMm + tolerance : onCenter || Math.abs(dist - shape.radiusMm) <= tolerance;
+        // SP헤드반경은 방 전체를 덮는 큰 원이라 둘레가 벽·보와 자주 겹친다 — 둘레로 잡힌 경우엔 겹친 다른 도형에 양보한다
+        size = shape.sprinklerHead && !onCenter ? Number.MAX_VALUE : shape.radiusMm;
       } else if (shape.kind === 'text') {
         const { width, height } = estimateTextBoxMm(shape.text);
         const dx = Math.abs(mm.x - shape.position.x);
@@ -331,7 +463,7 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
         size = shape.widthMm * shape.heightMm;
       }
 
-      if (hit && size < bestSize) {
+      if (hit && (size < bestSize || best === null)) {
         best = shape;
         bestSize = size;
       }
@@ -375,7 +507,8 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
             best = { kind: 'rectEdge', rect: s, edges, edgeIndex };
           }
         });
-      } else if (s.kind === 'circle') {
+      } else if (s.kind === 'circle' && !s.sprinklerHead) {
+        // SP헤드반경은 장애물에 맞춰 자동으로 잘려 그려지므로 TR 대상에서 뺀다 (호로 바뀌면 헤드 정보·방호범위 계산을 잃는다)
         const dist = Math.abs(distanceMm(mm, s.center) - s.radiusMm);
         if (dist <= DEFAULT_LINE_THICKNESS_MM / 2 + tolerance && dist < bestDist) {
           bestDist = dist;
@@ -391,8 +524,8 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
     if (!mm) return;
     e.currentTarget.setPointerCapture(e.pointerId);
 
-    // PC: 마우스 휠(가운데 버튼) 드래그로 화면 이동(팬)
-    if (e.pointerType === 'mouse' && e.button === 1) {
+    // PC: 마우스 휠(가운데 버튼) 드래그 또는 스페이스+왼쪽 드래그로 화면 이동(팬)
+    if (e.pointerType === 'mouse' && (e.button === 1 || (e.button === 0 && spaceHeld))) {
       e.preventDefault();
       panRef.current = { startClientX: e.clientX, startClientY: e.clientY, startPan: pan };
       return;
@@ -420,17 +553,17 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
     if (trimMode) {
       const target = findNearestTrimTarget(mm, pxToMm(CLICK_TOLERANCE_PX));
       if (target?.kind === 'line') {
-        const result = trimLineAtPoint(target.shape, mm, visibleShapes);
+        const result = trimLineAtPoint(target.shape, mm, trimCutters);
         if (result) onTrimLine(result.removedId, result.kept);
       } else if (target?.kind === 'rectEdge') {
         // 클릭한 변만 다른 도형들과 교차 지점 기준으로 자르고, 나머지 세 변은 그대로 선으로 남긴다
         const clickedEdge = target.edges[target.edgeIndex];
         const otherEdges = target.edges.filter((_, i) => i !== target.edgeIndex);
-        const others = visibleShapes.filter((s) => s.id !== target.rect.id);
+        const others = trimCutters.filter((s) => s.id !== target.rect.id);
         const result = trimLineAtPoint(clickedEdge, mm, others);
         if (result) onTrimLine(target.rect.id, [...result.kept, ...otherEdges]);
       } else if (target?.kind === 'circle') {
-        const others = visibleShapes.filter((s) => s.id !== target.shape.id);
+        const others = trimCutters.filter((s) => s.id !== target.shape.id);
         const result = trimCircleAtPoint(target.shape, mm, others);
         if (result) onTrimLine(result.removedId, result.kept);
       }
@@ -443,13 +576,16 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
       if (drawPhase === 'start') {
         onCanvasClick(point);
       } else {
-        onFinishDraw(point);
+        onFinishDraw(resolveEndPoint(mm, e.shiftKey));
       }
       return;
     }
 
+    // 선택 도구에서는 클릭이 시작점을 옮기지 않는다 — 도형 선택/이동과 빈 곳 드래그(마퀴)만 한다
+    const isSelectMode = mode === 'select';
+
     // 선분의 중점/사분점을 정확히 겨냥해 클릭하면, 그 지점이 선 위라도 선택보다 배치를 우선한다.
-    const precisePlacementSnap = findLineGuideSnap(mm, pxToMm(PLACEMENT_SNAP_PRIORITY_PX));
+    const precisePlacementSnap = isSelectMode ? null : findLineGuideSnap(mm, pxToMm(PLACEMENT_SNAP_PRIORITY_PX));
     if (precisePlacementSnap) {
       onSelect([]);
       onCanvasClick(precisePlacementSnap);
@@ -470,7 +606,6 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
       }
       onSelect(next);
       if (next.length > 0) {
-        onDragStart();
         dragRef.current = {
           ids: next,
           lastMm: mm,
@@ -479,6 +614,7 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
           totalDy: 0,
           appliedDx: 0,
           appliedDy: 0,
+          historyPushed: false,
         };
         dragSnappedRef.current = false;
       }
@@ -486,7 +622,7 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
     }
 
     // 도형을 직접 클릭한 게 아니면 근처 가이드 점(꼭짓점/중점/사분점/원둘레)에 스냅해 다음 시작점/중심점을 놓는다.
-    const vertexSnap = findPlacementSnap(mm, pxToMm(SNAP_TOLERANCE_PX));
+    const vertexSnap = isSelectMode ? null : findPlacementSnap(mm, pxToMm(SNAP_TOLERANCE_PX));
     if (vertexSnap) {
       onSelect([]);
       onCanvasClick(vertexSnap);
@@ -499,7 +635,7 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
     } else {
       // 터치/펜: 즉시 빈 공간 클릭으로 처리 (기존 동작 유지, 스냅은 위에서 이미 확인됨)
       onSelect([]);
-      onCanvasClick({ x: Math.round(mm.x / 10) * 10, y: Math.round(mm.y / 10) * 10 });
+      if (!isSelectMode) onCanvasClick({ x: Math.round(mm.x / 10) * 10, y: Math.round(mm.y / 10) * 10 });
     }
   };
 
@@ -532,7 +668,7 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
 
     if (drawArmed && mode !== 'text') {
       // 시작점을 찍기 전(phase start)에는 도형 미리보기를 그리지 않는다 — pendingPoint가 아직 이번 도형의 기준점이 아니기 때문
-      setDrawPreview(drawPhase === 'end' ? resolveDrawPoint(mm) : null);
+      setDrawPreview(drawPhase === 'end' ? resolveEndPoint(mm, e.shiftKey) : null);
       return;
     }
 
@@ -589,6 +725,10 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
     const outDx = finalDx - drag.appliedDx;
     const outDy = finalDy - drag.appliedDy;
     if (outDx !== 0 || outDy !== 0) {
+      if (!drag.historyPushed) {
+        onDragStart();
+        drag.historyPushed = true;
+      }
       onMoveShapes(drag.ids, outDx, outDy);
       drag.appliedDx = finalDx;
       drag.appliedDy = finalDy;
@@ -615,7 +755,7 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
         // 실제로는 드래그하지 않은 단순 클릭 — 빈 공간 클릭으로 처리 (스냅 대상은 pointerdown에서 이미 확인됨)
         const mm = marqueeRef.current.startMm;
         onSelect([]);
-        onCanvasClick({ x: Math.round(mm.x / 10) * 10, y: Math.round(mm.y / 10) * 10 });
+        if (mode !== 'select') onCanvasClick({ x: Math.round(mm.x / 10) * 10, y: Math.round(mm.y / 10) * 10 });
       }
       marqueeRef.current = null;
       setMarquee(null);
@@ -625,11 +765,54 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
     setSnapMarker(null);
   };
 
+  const svgStyle = { '--u': mmPerPx } as CSSProperties;
+
+  /** 글자 수로 어림한 라벨 상자(mm) — 한글 등 전각 글자는 한 글자 폭을, 영문·숫자는 그 절반 남짓을 차지한다고 본다 */
+  const labelBox = (x: number, y: number, content: string, fontPx: number): Bounds => {
+    let widthPx = 0;
+    for (const ch of content) widthPx += ch.charCodeAt(0) > 0x2e7f ? fontPx : fontPx * 0.6;
+    const halfW = px(widthPx / 2 + 2);
+    const halfH = px(fontPx * 0.7);
+    return { minX: x - halfW, maxX: x + halfW, minY: y - halfH, maxY: y + halfH };
+  };
+  // 이름 라벨(SP-1, C1 …)이 차지한 자리 — 선 길이 라벨은 이 자리와 서로를 피해 놓고, 놓을 곳이 없으면 생략한다
+  const occupiedLabelBoxes: Bounds[] = [];
+
+  // 헤드 캡션은 "SP-1 · R2.6M"처럼 이름과 반경을 함께 적되, 화면이 좁거나 축소돼 서로 겹치면 이름만, 그래도 겹치면 생략한다.
+  // 선택한 헤드는 항상 전체를 보여준다.
+  const headCaptions = new Map<string, string>();
+  const heads = visibleShapes.filter((s): s is CircleShape => s.kind === 'circle' && s.sprinklerHead === true);
+  const fullCaption = (head: CircleShape) => (head.label ? `${head.label} · R${formatMeters(head.radiusMm)}` : `R${formatMeters(head.radiusMm)}`);
+  const captionBox = (head: CircleShape, caption: string) => labelBox(head.center.x, head.center.y - px(LABEL_GAP_PX), caption, 12);
+  const fullBoxes = heads.map((head) => captionBox(head, fullCaption(head)));
+  const fullFits = !fullBoxes.some((box, i) => fullBoxes.some((other, j) => j > i && boundsIntersect(box, other)));
+  for (const head of heads) {
+    const isSelected = selectedIds.includes(head.id);
+    const caption = fullFits || isSelected ? fullCaption(head) : (head.label ?? '');
+    if (!caption) continue;
+    const box = captionBox(head, caption);
+    if (!isSelected && occupiedLabelBoxes.some((other) => boundsIntersect(box, other))) continue;
+    headCaptions.set(head.id, caption);
+    occupiedLabelBoxes.push(box);
+  }
+
+  for (const shape of visibleShapes) {
+    if (shape.kind === 'circle' && shape.sprinklerHead) {
+      continue;
+    } else if (shape.kind === 'circle' && shape.label) {
+      occupiedLabelBoxes.push(labelBox(shape.center.x, shape.center.y - shape.radiusMm - px(LABEL_GAP_PX), shape.label, 12));
+    } else if (shape.kind === 'rect' && shape.label) {
+      occupiedLabelBoxes.push(labelBox(shape.center.x, shape.center.y - shape.heightMm / 2 - px(LABEL_GAP_PX), shape.label, 12));
+    }
+  }
+  const dash = (on: number, off: number) => `${px(on)} ${px(off)}`;
+
   return (
     <div className="cad-canvas-wrap">
       <svg
         ref={svgRef}
-        className={`cad-canvas ${drawArmed ? 'cad-canvas-draw-armed' : ''}`}
+        className={`cad-canvas ${spaceHeld ? 'cad-canvas-pan' : drawArmed ? 'cad-canvas-draw-armed' : ''}`}
+        style={svgStyle}
         viewBox={viewBox}
         preserveAspectRatio="xMidYMid meet"
         onPointerDown={handlePointerDown}
@@ -639,28 +822,54 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
         onPointerLeave={() => setDrawPreview(null)}
       >
         <defs>
-          <pattern id="grid" width={GRID_MM} height={GRID_MM} patternUnits="userSpaceOnUse">
-            <path d={`M ${GRID_MM} 0 L 0 0 0 ${GRID_MM}`} fill="none" stroke="var(--border)" strokeWidth={8} />
+          <pattern id="grid" width={gridStep} height={gridStep} patternUnits="userSpaceOnUse">
+            <path d={`M ${gridStep} 0 L 0 0 0 ${gridStep}`} fill="none" stroke="var(--border)" strokeWidth={px(1)} />
           </pattern>
         </defs>
-        <rect className="cad-grid-bg" x={centerX - viewWidth / 2} y={centerY - viewHeight / 2} width={viewWidth} height={viewHeight} fill="url(#grid)" />
+        {/* 캔버스 영역의 가로세로 비율이 도면과 달라 생기는 여백까지 격자로 덮도록 viewBox보다 넉넉하게 깐다 */}
+        <rect className="cad-grid-bg" x={centerX - gridSpan / 2} y={centerY - gridSpan / 2} width={gridSpan} height={gridSpan} fill="url(#grid)" />
+
+        {/* 방호 검토: 어느 헤드의 방호범위에도 들지 않는 구역 */}
+        {uncoveredRects.length > 0 && (
+          <g className="cad-uncovered" pointerEvents="none">
+            {uncoveredRects.map((r) => (
+              <rect key={`${r.x}:${r.y}:${r.width}`} x={r.x} y={r.y} width={r.width} height={r.height} />
+            ))}
+          </g>
+        )}
 
         {visibleShapes.map((shape) => {
           const color = layerMap.get(shape.layer)?.color ?? 'var(--text)';
           const isSelected = selectedIds.includes(shape.id);
+          const outline = px(isSelected ? SELECTED_OUTLINE_PX : OUTLINE_PX);
+          const stroke = isSelected ? 'var(--primary)' : color;
           // 그릴 레이어가 아닌 도형은 선택은 안 되지만, 구분을 위해 살짝 흐리게 표시
           const opacity = activeLayerId === ALL_LAYERS_ID || shape.layer === activeLayerId ? 1 : 0.5;
 
           if (shape.kind === 'line') {
-            const strokeWidth = shape.thicknessMm ?? DEFAULT_LINE_THICKNESS_MM;
+            const strokeWidth = Math.max(shape.thicknessMm ?? DEFAULT_LINE_THICKNESS_MM, outline);
             const midX = (shape.start.x + shape.end.x) / 2;
             const midY = (shape.start.y + shape.end.y) / 2;
             const dx = shape.end.x - shape.start.x;
             const dy = shape.end.y - shape.start.y;
             const segLen = Math.hypot(dx, dy) || 1;
-            const offset = Math.max(strokeWidth / 2 + LENGTH_LABEL_OFFSET_MM, LENGTH_LABEL_OFFSET_MM);
-            const labelX = midX + (-dy / segLen) * offset;
-            const labelY = midY + (dx / segLen) * offset;
+            const showDetail = segLen / mmPerPx >= MIN_LABELED_LINE_PX;
+            const offset = strokeWidth / 2 + px(LINE_LABEL_GAP_PX);
+            const lengthText = formatMeters(Math.abs(shape.lengthMm));
+            // 선의 한쪽에 먼저 놓아 보고, 다른 라벨과 겹치면 반대쪽으로 옮긴다. 양쪽 다 겹치면 (선택한 선이 아닌 한) 생략한다.
+            let labelPos: Point | null = null;
+            if (showDetail) {
+              for (const side of [1, -1]) {
+                const candidate = { x: midX + (-dy / segLen) * offset * side, y: midY + (dx / segLen) * offset * side };
+                const box = labelBox(candidate.x, candidate.y, lengthText, 11);
+                if (!occupiedLabelBoxes.some((other) => boundsIntersect(box, other))) {
+                  labelPos = candidate;
+                  occupiedLabelBoxes.push(box);
+                  break;
+                }
+              }
+              if (!labelPos && isSelected) labelPos = { x: midX + (-dy / segLen) * offset, y: midY + (dx / segLen) * offset };
+            }
             return (
               <g key={shape.id} opacity={opacity} pointerEvents="none">
                 <line
@@ -668,37 +877,45 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
                   y1={shape.start.y}
                   x2={shape.end.x}
                   y2={shape.end.y}
-                  stroke={isSelected ? 'var(--primary)' : color}
-                  strokeWidth={isSelected ? Math.max(strokeWidth, 40) : strokeWidth}
+                  stroke={stroke}
+                  strokeWidth={strokeWidth}
                   strokeLinecap="round"
                 />
-                <text x={labelX} y={labelY} textAnchor="middle" className="cad-dim-label">
-                  {formatMeters(Math.abs(shape.lengthMm))}
-                </text>
-                {[0, 0.25, 0.5, 0.75, 1].map((t) => {
+                {labelPos && (
+                  <text x={labelPos.x} y={labelPos.y} textAnchor="middle" dominantBaseline="central" className="cad-dim-label">
+                    {lengthText}
+                  </text>
+                )}
+                {showDetail && [0, 0.25, 0.5, 0.75, 1].map((t) => {
                   const p = lerpPoint(shape.start, shape.end, t);
-                  return <circle key={t} cx={p.x} cy={p.y} r={GUIDE_DOT_RADIUS} className="cad-guide-dot" />;
+                  return <circle key={t} cx={p.x} cy={p.y} r={px(GUIDE_DOT_PX)} className="cad-guide-dot" />;
                 })}
               </g>
             );
           }
 
           if (shape.kind === 'rect') {
+            const top = shape.center.y - shape.heightMm / 2;
             return (
               <g key={shape.id} opacity={opacity} pointerEvents="none">
                 <rect
                   x={shape.center.x - shape.widthMm / 2}
-                  y={shape.center.y - shape.heightMm / 2}
+                  y={top}
                   width={shape.widthMm}
                   height={shape.heightMm}
                   fill={color}
                   fillOpacity={0.35}
-                  stroke={isSelected ? 'var(--primary)' : color}
-                  strokeWidth={isSelected ? 30 : 18}
+                  stroke={stroke}
+                  strokeWidth={outline}
                 />
                 {shape.label && (
-                  <text x={shape.center.x} y={shape.center.y - shape.heightMm / 2 - 60} textAnchor="middle" className="cad-label">
+                  <text x={shape.center.x} y={top - px(LABEL_GAP_PX)} textAnchor="middle" dominantBaseline="central" className="cad-label">
                     {shape.label}
+                  </text>
+                )}
+                {(isSelected || !shape.label) && (
+                  <text x={shape.center.x} y={top + shape.heightMm + px(LABEL_GAP_PX)} textAnchor="middle" dominantBaseline="central" className="cad-dim-label">
+                    {formatMeters(shape.widthMm)} × {formatMeters(shape.heightMm)}
                   </text>
                 )}
               </g>
@@ -717,8 +934,8 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
                     height={height}
                     fill="none"
                     stroke="var(--primary)"
-                    strokeWidth={16}
-                    strokeDasharray="30 20"
+                    strokeWidth={px(OUTLINE_PX)}
+                    strokeDasharray={dash(5, 4)}
                   />
                 )}
                 <text
@@ -746,7 +963,7 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
             const d = `M ${startPt.x} ${startPt.y} A ${shape.radiusMm} ${shape.radiusMm} 0 ${largeArcFlag} 0 ${endPt.x} ${endPt.y}`;
             return (
               <g key={shape.id} opacity={opacity} pointerEvents="none">
-                <path d={d} fill="none" stroke={isSelected ? 'var(--primary)' : color} strokeWidth={isSelected ? 30 : 18} />
+                <path d={d} fill="none" stroke={stroke} strokeWidth={Math.max(DEFAULT_LINE_THICKNESS_MM, outline)} />
               </g>
             );
           }
@@ -756,71 +973,82 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
             ? computeSprinklerCoveragePolygon(shape.center, shape.radiusMm, sprinklerObstacles, shape.id)
             : null;
           const circleFillOpacity = category === 'column' ? 0.35 : 0.08;
+          const dashArray = shape.sprinklerHead || category === 'sprinkler' ? dash(6, 4) : undefined;
 
+          if (shape.sprinklerHead) {
+            // 헤드 이름과 방호 반경을 한 줄로 묶어 헤드 바로 위에 붙인다 — 반경 표기를 원 둘레마다 따로 두면 서로 겹쳐 읽기 어렵다
+            const caption = headCaptions.get(shape.id);
+            return (
+              <g key={shape.id} opacity={opacity} pointerEvents="none">
+                <polygon
+                  points={(coveragePolygon ?? []).map((p) => `${p.x},${p.y}`).join(' ')}
+                  fill={color}
+                  fillOpacity={circleFillOpacity}
+                  stroke={stroke}
+                  strokeWidth={outline}
+                  strokeLinejoin="round"
+                  strokeDasharray={dashArray}
+                />
+                <circle cx={shape.center.x} cy={shape.center.y} r={px(3.5)} fill={isSelected ? 'var(--primary)' : color} />
+                {caption && (
+                  <text x={shape.center.x} y={shape.center.y - px(LABEL_GAP_PX)} textAnchor="middle" dominantBaseline="central" className={`cad-label ${isSelected ? 'cad-label-selected' : ''}`}>
+                    {caption}
+                  </text>
+                )}
+              </g>
+            );
+          }
+
+          const radiusLabelPos = pointFromPolar(shape.center, shape.radiusMm + px(LABEL_GAP_PX + 4), 45);
           return (
             <g key={shape.id} opacity={opacity} pointerEvents="none">
-              {coveragePolygon ? (
-                <polygon
-                  points={coveragePolygon.map((p) => `${p.x},${p.y}`).join(' ')}
-                  fill={color}
-                  fillOpacity={circleFillOpacity}
-                  stroke={isSelected ? 'var(--primary)' : color}
-                  strokeWidth={isSelected ? 30 : 18}
-                  strokeLinejoin="round"
-                  strokeDasharray={category === 'sprinkler' ? '60 40' : undefined}
-                />
-              ) : (
-                <circle
-                  cx={shape.center.x}
-                  cy={shape.center.y}
-                  r={shape.radiusMm}
-                  fill={color}
-                  fillOpacity={circleFillOpacity}
-                  stroke={isSelected ? 'var(--primary)' : color}
-                  strokeWidth={isSelected ? 30 : 18}
-                  strokeDasharray={category === 'sprinkler' ? '60 40' : undefined}
-                />
-              )}
-              {shape.sprinklerHead && (
-                <circle cx={shape.center.x} cy={shape.center.y} r={CENTER_DOT_RADIUS} fill={color} />
-              )}
+              <circle
+                cx={shape.center.x}
+                cy={shape.center.y}
+                r={shape.radiusMm}
+                fill={color}
+                fillOpacity={circleFillOpacity}
+                stroke={stroke}
+                strokeWidth={outline}
+                strokeDasharray={dashArray}
+              />
               {shape.label && (
-                <text x={shape.center.x} y={shape.center.y - shape.radiusMm - 60} textAnchor="middle" className="cad-label">
+                <text x={shape.center.x} y={shape.center.y - shape.radiusMm - px(LABEL_GAP_PX)} textAnchor="middle" dominantBaseline="central" className="cad-label">
                   {shape.label}
                 </text>
               )}
-              {(() => {
-                const labelPos = pointFromPolar(shape.center, shape.radiusMm + RADIUS_LABEL_MARGIN_MM, 135);
-                return (
-                  <text x={labelPos.x} y={labelPos.y} textAnchor="middle" className="cad-dim-label">
-                    {formatMeters(shape.radiusMm)}
-                  </text>
-                );
-              })()}
+              {(isSelected || !shape.label) && (
+                <text x={radiusLabelPos.x} y={radiusLabelPos.y} textAnchor="start" dominantBaseline="central" className="cad-dim-label">
+                  R{formatMeters(shape.radiusMm)}
+                </text>
+              )}
             </g>
           );
         })}
 
-        {/* 다음 도형의 시작점/중심점 표시 (클릭으로 위치 변경 가능, 근처 꼭짓점에 자동 스냅) */}
-        <g className="cad-pending" pointerEvents="none">
-          <line x1={pendingPoint.x - 180} y1={pendingPoint.y} x2={pendingPoint.x + 180} y2={pendingPoint.y} />
-          <line x1={pendingPoint.x} y1={pendingPoint.y - 180} x2={pendingPoint.x} y2={pendingPoint.y + 180} />
-          <circle cx={pendingPoint.x} cy={pendingPoint.y} r={120} />
-          <text x={pendingPoint.x + 220} y={pendingPoint.y - 220}>
-            {mode === 'line' ? '시작점' : mode === 'text' ? '텍스트 위치' : drawPreviewKind === 'rect' ? '좌상단 시작점' : '중심점'}
-          </text>
-        </g>
+        {/* 다음 도형의 시작점/중심점 표시 (클릭으로 위치 변경 가능, 근처 꼭짓점에 자동 스냅) — 선택 도구에서는 숨긴다 */}
+        {mode !== 'select' && (
+          <g className="cad-pending" pointerEvents="none">
+            <line x1={pendingPoint.x - px(13)} y1={pendingPoint.y} x2={pendingPoint.x + px(13)} y2={pendingPoint.y} />
+            <line x1={pendingPoint.x} y1={pendingPoint.y - px(13)} x2={pendingPoint.x} y2={pendingPoint.y + px(13)} />
+            <circle cx={pendingPoint.x} cy={pendingPoint.y} r={px(8)} strokeDasharray={dash(3, 2.5)} />
+            <text x={pendingPoint.x + px(14)} y={pendingPoint.y - px(14)}>
+              {mode === 'line' ? '시작점' : mode === 'text' ? '텍스트 위치' : drawPreviewKind === 'rect' ? '좌상단 시작점' : '중심점'}
+            </text>
+          </g>
+        )}
 
         {/* 마우스로 그리기 무장 상태: 시작점/중심점에서 커서까지의 미리보기 도형 + 실시간 치수 */}
         {drawArmed && drawPreview && (() => {
           if (drawPreviewKind === 'line') {
             const midX = (pendingPoint.x + drawPreview.x) / 2;
             const midY = (pendingPoint.y + drawPreview.y) / 2;
+            const { lengthMm, angleDeg } = lengthAndAngleBetween(pendingPoint, drawPreview);
             return (
               <g className="cad-draw-preview" pointerEvents="none">
-                <line x1={pendingPoint.x} y1={pendingPoint.y} x2={drawPreview.x} y2={drawPreview.y} />
-                <text x={midX} y={midY - 100} textAnchor="middle">
-                  {formatMeters(distanceMm(pendingPoint, drawPreview))}
+                <line x1={pendingPoint.x} y1={pendingPoint.y} x2={drawPreview.x} y2={drawPreview.y} strokeDasharray={dash(6, 4)} />
+                <text x={midX} y={midY - px(LABEL_GAP_PX + 2)} textAnchor="middle">
+                  {formatMeters(lengthMm)} · {angleDeg}°
                 </text>
               </g>
             );
@@ -833,8 +1061,8 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
             const y = Math.min(pendingPoint.y, drawPreview.y);
             return (
               <g className="cad-draw-preview" pointerEvents="none">
-                <rect x={x} y={y} width={w} height={h} />
-                <text x={x + w / 2} y={y - 100} textAnchor="middle">
+                <rect x={x} y={y} width={w} height={h} strokeDasharray={dash(6, 4)} />
+                <text x={x + w / 2} y={y - px(LABEL_GAP_PX)} textAnchor="middle">
                   {formatMeters(w)} × {formatMeters(h)}
                 </text>
               </g>
@@ -843,9 +1071,9 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
           const r = distanceMm(pendingPoint, drawPreview);
           return (
             <g className="cad-draw-preview" pointerEvents="none">
-              <circle cx={pendingPoint.x} cy={pendingPoint.y} r={r} />
-              <text x={pendingPoint.x} y={pendingPoint.y - r - 100} textAnchor="middle">
-                {formatMeters(r)}
+              <circle cx={pendingPoint.x} cy={pendingPoint.y} r={r} strokeDasharray={dash(6, 4)} />
+              <text x={pendingPoint.x} y={pendingPoint.y - r - px(LABEL_GAP_PX)} textAnchor="middle">
+                R{formatMeters(r)}
               </text>
             </g>
           );
@@ -854,9 +1082,9 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
         {/* 드래그 중 스냅된 꼭짓점 표시 */}
         {snapMarker && (
           <g className="cad-snap-marker" pointerEvents="none">
-            <circle cx={snapMarker.x} cy={snapMarker.y} r={160} />
-            <line x1={snapMarker.x - 220} y1={snapMarker.y} x2={snapMarker.x + 220} y2={snapMarker.y} />
-            <line x1={snapMarker.x} y1={snapMarker.y - 220} x2={snapMarker.x} y2={snapMarker.y + 220} />
+            <circle cx={snapMarker.x} cy={snapMarker.y} r={px(9)} />
+            <line x1={snapMarker.x - px(13)} y1={snapMarker.y} x2={snapMarker.x + px(13)} y2={snapMarker.y} />
+            <line x1={snapMarker.x} y1={snapMarker.y - px(13)} x2={snapMarker.x} y2={snapMarker.y + px(13)} />
           </g>
         )}
 
@@ -868,10 +1096,13 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
             y={Math.min(marquee.start.y, marquee.current.y)}
             width={Math.abs(marquee.current.x - marquee.start.x)}
             height={Math.abs(marquee.current.y - marquee.start.y)}
+            strokeDasharray={dash(5, 4)}
             pointerEvents="none"
           />
         )}
       </svg>
+
+      {trimMode && <p className="cad-mode-hint">TR: 다른 도형과 만나는 구간을 클릭하면 그 부분만 잘려요 · Esc로 끝내기</p>}
 
       {selectedIds.length > 0 && (
         <button type="button" className="cad-delete-selected" onClick={onDeleteSelected} aria-label="선택한 도형 삭제">
@@ -880,10 +1111,13 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
       )}
 
       <div className="cad-quick-actions">
-        <button type="button" className="cad-zoom-btn" onClick={onUndo} disabled={!canUndo} aria-label="실행 취소">
+        <button type="button" className="cad-zoom-btn" onClick={onUndo} disabled={!canUndo} aria-label="실행 취소" title="실행 취소 (Ctrl+Z)">
           <IconUndo />
         </button>
-        <button type="button" className="cad-zoom-btn" onClick={handleResetPendingClick} aria-label="원점으로">
+        <button type="button" className="cad-zoom-btn" onClick={onRedo} disabled={!canRedo} aria-label="다시 실행" title="다시 실행 (Ctrl+Y)">
+          <IconRedo />
+        </button>
+        <button type="button" className="cad-zoom-btn" onClick={handleResetPendingClick} aria-label="원점으로" title="시작점을 원점(0, 0)으로">
           <IconTarget />
         </button>
         <button
@@ -892,17 +1126,18 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
           onClick={() => { setTrimMode((v) => !v); onSelect([]); }}
           aria-pressed={trimMode}
           aria-label="TR (겹치는 선 잘라내기)"
+          title="TR: 겹치는 선 잘라내기"
         >
           <span className="cad-trim-label">Tr</span>
         </button>
       </div>
 
       <div className="cad-zoom-controls">
-        <button type="button" className="cad-zoom-btn" onClick={() => setZoom((z) => clamp(z / BUTTON_ZOOM_STEP, MIN_ZOOM, MAX_ZOOM))} aria-label="축소">
+        <button type="button" className="cad-zoom-btn" onClick={() => setZoom((z) => clamp(z / BUTTON_ZOOM_STEP, MIN_ZOOM, MAX_ZOOM))} aria-label="축소" title="축소">
           <IconZoomOut />
         </button>
         <span className="cad-zoom-level">{Math.round(zoom * 100)}%</span>
-        <button type="button" className="cad-zoom-btn" onClick={() => setZoom((z) => clamp(z * BUTTON_ZOOM_STEP, MIN_ZOOM, MAX_ZOOM))} aria-label="확대">
+        <button type="button" className="cad-zoom-btn" onClick={() => setZoom((z) => clamp(z * BUTTON_ZOOM_STEP, MIN_ZOOM, MAX_ZOOM))} aria-label="확대" title="확대">
           <IconZoomIn />
         </button>
         <button
@@ -914,6 +1149,7 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
             setPan({ x: 0, y: 0 });
           }}
           aria-label="화면 맞춤"
+          title="도면 전체가 보이게 맞춤"
         >
           <IconFit />
         </button>

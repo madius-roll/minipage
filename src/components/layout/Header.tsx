@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import Button from '../ui/Button';
 import { IconBook, IconDownload, IconLogOut, IconUser } from '../ui/Icon';
 import { useAuth } from '../auth/AuthContext';
@@ -7,10 +8,12 @@ interface HeaderProps {
   onOpenGuide?: () => void;
   onExportPdf?: () => void;
   exportingPdf?: boolean;
+  /** 도면 이름·새 도면·파일 저장/불러오기 메뉴 (에디터 화면에서만 넘긴다) */
+  drawingMenu?: ReactNode;
 }
 
-/** 상단 헤더 — 로고, 법령 가이드 진입, PDF 저장, 프로필/로그아웃 */
-export default function Header({ onOpenGuide, onExportPdf, exportingPdf }: HeaderProps) {
+/** 상단 헤더 — 로고, 도면 메뉴, 법령 가이드 진입, PDF 저장, 프로필/로그아웃 */
+export default function Header({ onOpenGuide, onExportPdf, exportingPdf, drawingMenu }: HeaderProps) {
   const { user, logout } = useAuth();
 
   return (
@@ -24,11 +27,12 @@ export default function Header({ onOpenGuide, onExportPdf, exportingPdf }: Heade
       </div>
 
       <div className="header-actions">
-        <Button variant="ghost" size="sm" icon={<IconBook />} onClick={onOpenGuide} disabled={!onOpenGuide}>
-          법령 가이드
+        {drawingMenu}
+        <Button variant="ghost" size="sm" icon={<IconBook />} onClick={onOpenGuide} disabled={!onOpenGuide} aria-label="법령 가이드">
+          <span className="header-btn-label">법령 가이드</span>
         </Button>
-        <Button variant="ghost" size="sm" icon={<IconDownload />} onClick={onExportPdf} disabled={!onExportPdf || exportingPdf}>
-          {exportingPdf ? 'PDF 저장 중…' : 'PDF 저장'}
+        <Button variant="ghost" size="sm" icon={<IconDownload />} onClick={onExportPdf} disabled={!onExportPdf || exportingPdf} aria-label="PDF 저장">
+          <span className="header-btn-label">{exportingPdf ? 'PDF 저장 중…' : 'PDF 저장'}</span>
         </Button>
 
         <div className="header-profile">

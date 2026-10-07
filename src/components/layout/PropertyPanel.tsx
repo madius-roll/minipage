@@ -10,6 +10,7 @@ interface PropertyPanelProps {
   onUpdateCircle: (id: string, radiusMm: number) => void;
   onUpdateRect: (id: string, widthMm: number, heightMm: number) => void;
   onUpdateText: (id: string, text: string) => void;
+  onUpdateLabel: (id: string, label: string) => void;
   onDeleteSelected: () => void;
   onCopySelected: () => void;
   onPasteShape: () => void;
@@ -23,6 +24,7 @@ export default function PropertyPanel({
   onUpdateCircle,
   onUpdateRect,
   onUpdateText,
+  onUpdateLabel,
   onDeleteSelected,
   onCopySelected,
   onPasteShape,
@@ -53,9 +55,9 @@ export default function PropertyPanel({
         single.kind === 'line' ? (
           <LineFields key={single.id} shape={single} onUpdateLine={onUpdateLine} />
         ) : single.kind === 'circle' ? (
-          <CircleFields key={single.id} shape={single} onUpdateCircle={onUpdateCircle} />
+          <CircleFields key={single.id} shape={single} onUpdateCircle={onUpdateCircle} onUpdateLabel={onUpdateLabel} />
         ) : single.kind === 'rect' ? (
-          <RectFields key={single.id} shape={single} onUpdateRect={onUpdateRect} />
+          <RectFields key={single.id} shape={single} onUpdateRect={onUpdateRect} onUpdateLabel={onUpdateLabel} />
         ) : single.kind === 'arc' ? (
           <ArcFields key={single.id} shape={single} />
         ) : (
@@ -112,7 +114,27 @@ function LineFields({ shape, onUpdateLine }: { shape: LineShape; onUpdateLine: P
   );
 }
 
-function CircleFields({ shape, onUpdateCircle }: { shape: CircleShape; onUpdateCircle: PropertyPanelProps['onUpdateCircle'] }) {
+/** 원·사각형에 붙는 이름표(SP-1, C1 등) — 비워 두면 라벨 없이 그려진다 */
+function LabelField({ shape, onUpdateLabel }: { shape: CircleShape | RectShape; onUpdateLabel: PropertyPanelProps['onUpdateLabel'] }) {
+  const [label, setLabel] = useState(shape.label ?? '');
+  return (
+    <div className="field">
+      <label htmlFor="edit-label">라벨</label>
+      <input
+        id="edit-label"
+        type="text"
+        maxLength={12}
+        placeholder="없음"
+        value={label}
+        onChange={(e) => setLabel(e.target.value)}
+        onBlur={() => onUpdateLabel(shape.id, label)}
+        onKeyDown={commitOnEnter}
+      />
+    </div>
+  );
+}
+
+function CircleFields({ shape, onUpdateCircle, onUpdateLabel }: { shape: CircleShape; onUpdateCircle: PropertyPanelProps['onUpdateCircle']; onUpdateLabel: PropertyPanelProps['onUpdateLabel'] }) {
   const [radius, setRadius] = useState(String(shape.radiusMm));
 
   const commit = () => {
@@ -128,20 +150,15 @@ function CircleFields({ shape, onUpdateCircle }: { shape: CircleShape; onUpdateC
         <span className="property-static">({shape.center.x}, {shape.center.y}) mm</span>
       </div>
       <div className="field">
-        <label htmlFor="edit-radius">반지름 (mm)</label>
+        <label htmlFor="edit-radius">{shape.sprinklerHead ? '방호 반경 (mm)' : '반지름 (mm)'}</label>
         <input id="edit-radius" type="number" min="1" value={radius} onChange={(e) => setRadius(e.target.value)} onBlur={commit} onKeyDown={commitOnEnter} />
       </div>
-      {shape.label && (
-        <div className="field">
-          <label>라벨</label>
-          <span className="property-static">{shape.label}</span>
-        </div>
-      )}
+      <LabelField shape={shape} onUpdateLabel={onUpdateLabel} />
     </div>
   );
 }
 
-function RectFields({ shape, onUpdateRect }: { shape: RectShape; onUpdateRect: PropertyPanelProps['onUpdateRect'] }) {
+function RectFields({ shape, onUpdateRect, onUpdateLabel }: { shape: RectShape; onUpdateRect: PropertyPanelProps['onUpdateRect']; onUpdateLabel: PropertyPanelProps['onUpdateLabel'] }) {
   const [width, setWidth] = useState(String(shape.widthMm));
   const [height, setHeight] = useState(String(shape.heightMm));
 
@@ -155,8 +172,8 @@ function RectFields({ shape, onUpdateRect }: { shape: RectShape; onUpdateRect: P
   return (
     <div className="property-grid">
       <div className="field">
-        <label>중심</label>
-        <span className="property-static">({shape.center.x}, {shape.center.y}) mm</span>
+        <label>좌상단</label>
+        <span className="property-static">({Math.round(shape.center.x - shape.widthMm / 2)}, {Math.round(shape.center.y - shape.heightMm / 2)}) mm</span>
       </div>
       <div className="field">
         <label htmlFor="edit-width">가로 (mm)</label>
@@ -166,12 +183,7 @@ function RectFields({ shape, onUpdateRect }: { shape: RectShape; onUpdateRect: P
         <label htmlFor="edit-height">세로 (mm)</label>
         <input id="edit-height" type="number" min="1" value={height} onChange={(e) => setHeight(e.target.value)} onBlur={commit} onKeyDown={commitOnEnter} />
       </div>
-      {shape.label && (
-        <div className="field">
-          <label>라벨</label>
-          <span className="property-static">{shape.label}</span>
-        </div>
-      )}
+      <LabelField shape={shape} onUpdateLabel={onUpdateLabel} />
     </div>
   );
 }

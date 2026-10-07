@@ -82,6 +82,8 @@ a {
     grid-template-rows: 56px 1fr;
     --sheet-sidebar-h: 62vh;
     --mobile-strip-h: 44px;
+    /* 접힌 하단 손잡이(모드 아이콘 줄 + 레이어 이름 줄 + 한 줄 입력)의 대략적인 높이 */
+    --mobile-handle-h: 120px;
   }
   .app-body {
     display: block;

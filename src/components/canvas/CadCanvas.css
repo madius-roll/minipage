@@ -21,6 +21,10 @@
   cursor: crosshair;
 }
 
+.cad-canvas-pan {
+  cursor: grab;
+}
+
 .cad-zoom-controls {
   position: absolute;
   left: 50%;
@@ -109,24 +113,32 @@
 }
 
 @media (max-width: 860px) {
-  /* 하단에 항상 떠 있는 모바일 시트 손잡이(그리기 모드 아이콘 줄 포함) + 접힌 상태의 미니 입력폼에
-     가리지 않도록 띄워준다. */
+  /* 캔버스 영역 자체가 하단 손잡이 위에서 끝나므로, 손잡이가 조금 더 높아지는 경우(입력칸이 있는 모드)만 피하면 된다. */
   /* 실행취소/원점 버튼(좌측)은 그대로 두고, 확대/축소 버튼 모음은 가운데 대신 우측으로 정렬 */
   .cad-zoom-controls {
     left: auto;
     right: 12px;
     transform: none;
-    bottom: calc(152px + env(safe-area-inset-bottom, 0px));
+    bottom: 32px;
     padding: 5px;
   }
   .cad-quick-actions {
     left: 12px;
-    bottom: calc(152px + env(safe-area-inset-bottom, 0px));
+    bottom: 32px;
     padding: 5px;
   }
   .cad-zoom-btn {
     width: 32px;
     height: 32px;
+  }
+
+  /* 좁은 화면에서는 배율 숫자를 빼서 양쪽 버튼 묶음이 서로 겹치지 않게 한다 */
+  .cad-zoom-level {
+    display: none;
+  }
+  .cad-zoom-controls,
+  .cad-quick-actions {
+    gap: 6px;
   }
 
   /* 모바일 전용: 속성 패널이 없어진 대신, 선택된 도형을 바로 지울 수 있는 작은 버튼 */
@@ -153,15 +165,31 @@
 }
 
 
+/* 아래 캔버스 글자·선 굵기는 --u(화면 1px이 도면에서 몇 mm인지)를 곱해 화면 기준 크기로 그린다 */
+.cad-label,
+.cad-dim-label {
+  /* 글자 둘레에 배경색 테두리를 둘러, 선이나 다른 라벨과 겹쳐도 읽히게 한다 */
+  paint-order: stroke;
+  stroke: var(--bg);
+  stroke-width: calc(var(--u) * 3px);
+  stroke-linejoin: round;
+}
+
 .cad-label {
   fill: var(--sub);
-  font-size: 220px;
+  font-size: calc(var(--u) * 12px);
+  font-weight: 500;
   font-family: var(--font-family);
+}
+
+.cad-label-selected {
+  fill: var(--primary);
+  font-weight: 600;
 }
 
 .cad-dim-label {
   fill: var(--sub);
-  font-size: 190px;
+  font-size: calc(var(--u) * 11px);
   font-weight: 500;
   font-family: var(--font-family);
 }
@@ -177,20 +205,24 @@
   opacity: .7;
 }
 
+.cad-uncovered rect {
+  fill: var(--danger);
+  fill-opacity: .3;
+}
+
 .cad-pending line,
 .cad-pending circle {
   stroke: var(--primary);
-  stroke-width: 14;
+  stroke-width: calc(var(--u) * 1.3px);
 }
 
 .cad-pending circle {
   fill: none;
-  stroke-dasharray: 30 20;
 }
 
 .cad-pending text {
   fill: var(--primary);
-  font-size: 200px;
+  font-size: calc(var(--u) * 12px);
   font-family: var(--font-family);
   font-weight: 600;
 }
@@ -199,14 +231,13 @@
 .cad-draw-preview circle,
 .cad-draw-preview rect {
   stroke: var(--primary);
-  stroke-width: 18;
-  stroke-dasharray: 40 24;
+  stroke-width: calc(var(--u) * 1.5px);
   fill: none;
 }
 
 .cad-draw-preview text {
   fill: var(--primary);
-  font-size: 190px;
+  font-size: calc(var(--u) * 12px);
   font-family: var(--font-family);
   font-weight: 600;
 }
@@ -214,7 +245,7 @@
 .cad-snap-marker line,
 .cad-snap-marker circle {
   stroke: #FFD166;
-  stroke-width: 16;
+  stroke-width: calc(var(--u) * 1.5px);
 }
 
 .cad-snap-marker circle {
@@ -224,6 +255,26 @@
 .cad-marquee {
   fill: rgba(29, 185, 84, 0.12);
   stroke: var(--primary);
-  stroke-width: 6;
-  stroke-dasharray: 24 16;
+  stroke-width: calc(var(--u) * 1px);
+}
+
+/* TR처럼 클릭의 의미가 바뀌는 모드를 캔버스 위쪽에 알려주는 한 줄 안내 */
+.cad-mode-hint {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: calc(100% - 24px);
+  margin: 0;
+  padding: 6px 12px;
+  background: var(--surface);
+  border: 1.5px solid var(--primary);
+  border-radius: 999px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+  text-align: center;
+  word-break: keep-all;
+  z-index: 5;
+  pointer-events: none;
 }

@@ -1,15 +1,16 @@
 import type { FormEvent, ReactNode } from 'react';
 import Button from '../ui/Button';
-import { IconLine, IconPencil, IconShapes, IconSprinklerRadius, IconText } from '../ui/Icon';
+import { IconCursor, IconLine, IconOrtho, IconPencil, IconShapes, IconSprinklerRadius, IconText } from '../ui/Icon';
 import type { Layer, LayerCategory, Point } from '../../types/cad';
 import { ALL_LAYERS_ID, DEFAULT_BEAM_THICKNESS_MM } from '../../data/layerMeta';
 import './panels.css';
 import './ToolPanel.css';
 
-export type DrawMode = 'line' | 'circle' | 'sprinklerHead' | 'text';
+export type DrawMode = 'select' | 'line' | 'circle' | 'sprinklerHead' | 'text';
 export type ColumnShape = 'circle' | 'rect';
 
 const DRAW_MODE_LABEL: Record<DrawMode, string> = {
+  select: '선택',
   line: '선 그리기',
   circle: '도형 그리기',
   sprinklerHead: 'SP헤드반경',
@@ -17,26 +18,32 @@ const DRAW_MODE_LABEL: Record<DrawMode, string> = {
 };
 
 const DRAW_MODE_ICON: Record<DrawMode, ReactNode> = {
+  select: <IconCursor />,
   line: <IconLine />,
   circle: <IconShapes />,
   sprinklerHead: <IconSprinklerRadius />,
   text: <IconText />,
 };
 
-/** 레이어 용도별로 실제 쓰이는 그리기 도구만 메뉴에 남긴다 (예: 스프링클러 레이어엔 SP헤드반경·텍스트만) */
+/** 레이어 용도별로 실제 쓰이는 그리기 도구만 메뉴에 남긴다 (예: 스프링클러 레이어엔 SP헤드반경·텍스트만). 선택 도구는 어느 레이어에서나 쓸 수 있다 */
 export function getAllowedDrawModes(category?: LayerCategory): DrawMode[] {
   switch (category) {
     case 'wall':
-      return ['line', 'circle', 'text'];
+      return ['select', 'line', 'circle', 'text'];
     case 'beam':
-      return ['line', 'text'];
+      return ['select', 'line', 'text'];
     case 'column':
-      return ['line', 'circle', 'text'];
+      return ['select', 'line', 'circle', 'text'];
     case 'sprinkler':
-      return ['sprinklerHead', 'text'];
+      return ['select', 'sprinklerHead', 'text'];
     default:
-      return ['line', 'circle', 'sprinklerHead', 'text'];
+      return ['select', 'line', 'circle', 'sprinklerHead', 'text'];
   }
+}
+
+/** 캔버스 클릭으로 시작점→끝점을 찍어 그릴 수 있는 모드인지 (선택·텍스트는 해당 없음) */
+export function isMouseDrawMode(mode: DrawMode): boolean {
+  return mode !== 'select' && mode !== 'text';
 }
 
 /** 도형 그리기에서 원/사각형을 함께 고를 수 있는 레이어 — 벽체(방 형태), 기둥(사각 기둥) */
@@ -79,6 +86,9 @@ interface ToolPanelProps {
   onToggleDrawArmed: () => void;
   /** 무장 상태에서 다음 클릭이 시작점을 정하는 차례인지, 끝점을 찍어 도형을 완성하는 차례인지 */
   drawPhase: 'start' | 'end';
+  /** 직교 고정 — 마우스로 그리는 선을 0°/45°/90° 방향으로만 그린다 */
+  orthoLock: boolean;
+  onToggleOrthoLock: () => void;
   drawForm: DrawFormState;
   onDrawFormChange: (patch: Partial<DrawFormState>) => void;
   onAddLine: (lengthMm: number, angleDeg: number, thicknessMm?: number) => void;
@@ -89,6 +99,8 @@ interface ToolPanelProps {
   onResetPending: () => void;
   onUndo: () => void;
   canUndo: boolean;
+  onRedo: () => void;
+  canRedo: boolean;
   onClearAll: () => void;
   canClearAll: boolean;
 }
@@ -104,6 +116,8 @@ export default function ToolPanel({
   drawArmed,
   onToggleDrawArmed,
   drawPhase,
+  orthoLock,
+  onToggleOrthoLock,
   drawForm,
   onDrawFormChange,
   onAddLine,
@@ -114,6 +128,8 @@ export default function ToolPanel({
   onResetPending,
   onUndo,
   canUndo,
+  onRedo,
+  canRedo,
   onClearAll,
   canClearAll,
 }: ToolPanelProps) {
@@ -206,6 +222,12 @@ export default function ToolPanel({
         ))}
       </div>
 
+      {mode === 'select' ? (
+        <p className="tool-hint tool-all-layers-hint">
+          도형을 클릭해 선택하고 드래그로 옮겨요. 빈 곳을 드래그하면 여러 개를 한번에, Shift+클릭으로 하나씩 더 선택할 수 있어요.
+        </p>
+      ) : (
+        <>
       <p className="tool-pending-point">
         {mode === 'line' ? '시작점' : mode === 'text' ? '텍스트 위치' : isRectMode ? '좌상단 시작점' : '중심점'}: ({pendingPoint.x}, {pendingPoint.y}) mm
         <button type="button" className="tool-pending-reset" onClick={onResetPending}>
@@ -216,16 +238,30 @@ export default function ToolPanel({
 
       {mode !== 'text' && (
         <>
-          <Button
-            size="sm"
-            variant="ghost"
-            active={drawArmed}
-            icon={<IconPencil />}
-            onClick={onToggleDrawArmed}
-            className="tool-draw-toggle"
-          >
-            마우스로 그리기 {drawArmed ? 'ON' : 'OFF'}
-          </Button>
+          <div className="tool-toggle-row">
+            <Button
+              size="sm"
+              variant="ghost"
+              active={drawArmed}
+              icon={<IconPencil />}
+              onClick={onToggleDrawArmed}
+              className="tool-draw-toggle"
+              title="켜면 캔버스를 두 번 클릭(탭)해서 바로 그려요. 끄면 클릭은 시작점만 옮기고, 아래 수치를 입력해 그려요."
+            >
+              클릭 그리기 {drawArmed ? 'ON' : 'OFF'}
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              active={orthoLock}
+              icon={<IconOrtho />}
+              onClick={onToggleOrthoLock}
+              className="tool-draw-toggle"
+              title="켜면 선이 0°/45°/90° 방향으로만 그려져요. Shift를 누르고 있어도 같아요."
+            >
+              직교 {orthoLock ? 'ON' : 'OFF'}
+            </Button>
+          </div>
           {drawArmed && (
             <p className="tool-hint">
               {drawPhase === 'start'
@@ -308,13 +344,16 @@ export default function ToolPanel({
       )}
         </>
       )}
+        </>
+      )}
 
       <div className="tool-session-actions">
-        {!isAllLayers && (
-          <Button size="sm" variant="ghost" onClick={onUndo} disabled={!canUndo} className="tool-undo">
-            이전으로
-          </Button>
-        )}
+        <Button size="sm" variant="ghost" onClick={onUndo} disabled={!canUndo} className="tool-undo">
+          실행 취소
+        </Button>
+        <Button size="sm" variant="ghost" onClick={onRedo} disabled={!canRedo} className="tool-undo">
+          다시 실행
+        </Button>
         <Button size="sm" variant="ghost" onClick={onClearAll} disabled={!canClearAll} className="tool-clear-all">
           전체 지우기
         </Button>

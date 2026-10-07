@@ -1,0 +1,88 @@
+.drawing-menu {
+  position: relative;
+}
+
+.drawing-menu-name {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.drawing-menu-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 248px;
+  max-width: calc(100vw - 24px);
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, .55);
+  z-index: 60;
+}
+
+.drawing-menu-items {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.drawing-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: 9px 8px;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-family: var(--font-family);
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+
+.drawing-menu-item:hover {
+  background: var(--surface-raised);
+  color: var(--primary);
+}
+
+.drawing-menu-item .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.drawing-menu-note {
+  margin: 0;
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--sub);
+  word-break: keep-all;
+}
+
+.drawing-menu-note.is-error {
+  color: var(--danger);
+}
+
+.drawing-menu-file {
+  display: none;
+}
+
+@media (max-width: 480px) {
+  /* 헤더 버튼이 아이콘만 남는 좁은 화면에서는 화면 오른쪽 끝 기준으로 띄운다 */
+  .drawing-menu {
+    position: static;
+  }
+  .drawing-menu-popover {
+    top: 52px;
+    right: 12px;
+  }
+}

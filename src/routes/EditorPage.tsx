@@ -1,21 +1,38 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Header from '../components/layout/Header';
-import ToolPanel, { DEFAULT_DRAW_FORM, getAllowedDrawModes, supportsRectShape, type DrawFormState, type DrawMode } from '../components/layout/ToolPanel';
+import DrawingMenu from '../components/layout/DrawingMenu';
+import ToolPanel, { DEFAULT_DRAW_FORM, getAllowedDrawModes, isMouseDrawMode, supportsRectShape, type DrawFormState, type DrawMode } from '../components/layout/ToolPanel';
 import LayerPanel from '../components/layout/LayerPanel';
+import ReviewPanel from '../components/layout/ReviewPanel';
 import PropertyPanel from '../components/layout/PropertyPanel';
 import CadCanvas, { type CadCanvasHandle } from '../components/canvas/CadCanvas';
 import LawGuideModal from '../components/guide/LawGuideModal';
 import MobileSheetHandle from '../components/layout/MobileSheetHandle';
 import MobileLayerStrip from '../components/layout/MobileLayerStrip';
-import { dummyLayers, dummyShapes } from '../data/dummyDrawing';
+import { dummyLayers } from '../data/dummyDrawing';
 import { ALL_LAYERS_ID, LAYER_COLOR_PALETTE, MAX_LAYERS } from '../data/layerMeta';
+import { useDialogs } from '../hooks/useDialogs';
+import { useDrawing } from '../hooks/useDrawing';
 import type { ArcShape, Layer, LayerCategory, LineShape, Point, Shape } from '../types/cad';
 import { distanceMm, genId, lengthAndAngleBetween, pointFromPolar, translateShape } from '../utils/geometry';
 import { exportDrawingAsPdf } from '../utils/exportPdf';
+import { COLUMN_LABEL_PREFIX, nextNumberedLabel, numberedLabelPrefix, SPRINKLER_LABEL_PREFIX } from '../utils/labels';
+import { computeReview } from '../utils/review';
+import { DEFAULT_DRAWING_NAME, downloadDrawingFile, readDrawingFile } from '../utils/storage';
 import './EditorPage.css';
 
 const ORIGIN: Point = { x: 0, y: 0 };
 const PASTE_OFFSET = 300;
+/** 방향키 한 번에 선택 도형을 옮기는 거리(mm) — Shift를 누르면 크게 옮긴다 */
+const NUDGE_MM = 10;
+const NUDGE_LARGE_MM = 100;
+
+const ARROW_DELTAS: Record<string, Point> = {
+  ArrowLeft: { x: -1, y: 0 },
+  ArrowRight: { x: 1, y: 0 },
+  ArrowUp: { x: 0, y: -1 },
+  ArrowDown: { x: 0, y: 1 },
+};
 
 function isEditableTarget(target: EventTarget | null): boolean {
   const el = target as HTMLElement | null;
@@ -24,30 +41,33 @@ function isEditableTarget(target: EventTarget | null): boolean {
 }
 
 export default function EditorPage() {
-  const [layers, setLayers] = useState<Layer[]>(dummyLayers);
-  const [shapes, setShapes] = useState<Shape[]>(dummyShapes);
-  const [drawMode, setDrawMode] = useState<DrawMode>('line');
+  const drawing = useDrawing();
+  const { name, layers, setLayers, shapes, setShapes, pendingPoint, setPendingPoint, pushHistory } = drawing;
+  const dialogs = useDialogs();
+  const [drawMode, setDrawMode] = useState<DrawMode>('select');
   const [drawForm, setDrawForm] = useState<DrawFormState>(DEFAULT_DRAW_FORM);
-  const [activeLayerId, setActiveLayerId] = useState<string>(dummyLayers[0].id);
+  const [activeLayerId, setActiveLayerId] = useState<string>(layers[0].id);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [pendingPoint, setPendingPoint] = useState<Point>(ORIGIN);
-  /** 마우스로 직접 그리기 무장 상태 — CAD처럼 그리기 모드에서는 기본으로 켜져 있다 */
-  const [drawArmed, setDrawArmed] = useState(true);
+  /** 마우스로 직접 그리기 무장 상태 — CAD처럼 그리기 모드(선/도형/SP헤드반경)를 고르면 기본으로 켜진다 */
+  const [drawArmed, setDrawArmed] = useState(false);
   /** 무장 상태에서 다음 클릭이 시작점을 찍는 차례인지, 끝점을 찍어 도형을 완성하는 차례인지 */
   const [drawPhase, setDrawPhase] = useState<'start' | 'end'>('start');
+  /** 직교 고정 — 켜면 마우스로 그리는 선이 0°/45°/90° 방향으로만 그려진다 (Shift를 누르고 있는 동안에도 같은 효과) */
+  const [orthoLock, setOrthoLock] = useState(false);
   const [mergeMode, setMergeMode] = useState(false);
   const [mergeSelection, setMergeSelection] = useState<string[]>([]);
   const [guideOpen, setGuideOpen] = useState(false);
   const [exportingPdf, setExportingPdf] = useState(false);
   const [clipboard, setClipboard] = useState<Shape[]>([]);
   const [mobileSheetOpen, setMobileSheetOpen] = useState(false);
-  const [history, setHistory] = useState<Shape[][]>([]);
+  const [showUncovered, setShowUncovered] = useState(true);
+  /** 도면을 통째로 갈아 끼울 때마다 올려서 캔버스를 새로 띄운다 (화면 맞춤·줌이 새 도면 기준으로 다시 잡힌다) */
+  const [canvasKey, setCanvasKey] = useState(0);
   const canvasRef = useRef<CadCanvasHandle>(null);
+  /** 실제로 캔버스 클릭이 그리기로 처리되는 상태 — 무장돼 있어도 선택/텍스트 모드나 "전체 레이어"에서는 그리지 않는다 */
+  const armed = drawArmed && isMouseDrawMode(drawMode) && activeLayerId !== ALL_LAYERS_ID;
 
-  /** 도형을 바꾸는 동작 직전에 호출해 실행취소용 스냅샷을 쌓는다 (연속 드래그는 시작 시점에 한 번만) */
-  const pushHistory = () => {
-    setHistory((prev) => [...prev, shapes]);
-  };
+  const review = useMemo(() => computeReview(shapes, layers), [shapes, layers]);
 
   // 활성 레이어가 삭제/병합으로 사라지면 남은 첫 레이어로 대체 ("전체 레이어" 선택 상태는 예외)
   useEffect(() => {
@@ -66,15 +86,16 @@ export default function EditorPage() {
   const handleActiveLayerChange = (id: string) => {
     setActiveLayerId(id);
     setDrawPhase('start');
-    // "전체 레이어"에서는 그리기를 할 수 없다 — 전체 지우기 등 관리 동작만 가능
+    // "전체 레이어"에서는 그리기를 할 수 없다 — 선택·이동·삭제 등 관리 동작만 가능
     if (id === ALL_LAYERS_ID) {
+      setDrawMode('select');
       setDrawArmed(false);
     } else {
       const layer = layers.find((l) => l.id === id);
       const allowed = getAllowedDrawModes(layer?.category);
       const nextMode = allowed.includes(drawMode) ? drawMode : allowed[0];
       if (nextMode !== drawMode) setDrawMode(nextMode);
-      setDrawArmed(nextMode !== 'text');
+      setDrawArmed(isMouseDrawMode(nextMode));
       // 다른 레이어로 바꾸면 그 레이어에 속하지 않은 선택은 해제한다
       setSelectedIds((prev) => prev.filter((sid) => shapes.find((s) => s.id === sid)?.layer === id));
     }
@@ -82,12 +103,12 @@ export default function EditorPage() {
 
   const handleModeChange = (nextMode: DrawMode) => {
     setDrawMode(nextMode);
-    setDrawArmed(nextMode !== 'text' && activeLayerId !== ALL_LAYERS_ID);
+    setDrawArmed(isMouseDrawMode(nextMode) && activeLayerId !== ALL_LAYERS_ID);
     setDrawPhase('start');
   };
 
   const handleToggleDrawArmed = () => {
-    if (activeLayerId === ALL_LAYERS_ID) return;
+    if (activeLayerId === ALL_LAYERS_ID || !isMouseDrawMode(drawMode)) return;
     setDrawArmed((prev) => {
       const next = !prev;
       if (next) setDrawPhase('start');
@@ -99,30 +120,39 @@ export default function EditorPage() {
     setLayers((prev) => prev.map((l) => (l.id === id ? { ...l, visible: !l.visible } : l)));
   };
 
-  const renameLayer = (id: string, name: string) => {
-    setLayers((prev) => prev.map((l) => (l.id === id ? { ...l, name } : l)));
+  const renameLayer = (id: string, nextName: string) => {
+    if (layers.find((l) => l.id === id)?.name === nextName) return;
+    pushHistory();
+    setLayers((prev) => prev.map((l) => (l.id === id ? { ...l, name: nextName } : l)));
   };
 
-  const addLayer = (name: string, category: LayerCategory) => {
+  const addLayer = (layerName: string, category: LayerCategory) => {
     if (layers.length >= MAX_LAYERS) return;
-    const color = LAYER_COLOR_PALETTE[layers.length % LAYER_COLOR_PALETTE.length];
-    const newLayer: Layer = { id: genId('layer'), name, category, color, visible: true };
+    // 이미 쓰이지 않는 색을 먼저 고른다 (레이어를 지웠다 다시 만들면 같은 색이 겹치지 않도록)
+    const color = LAYER_COLOR_PALETTE.find((c) => !layers.some((l) => l.color === c)) ?? LAYER_COLOR_PALETTE[layers.length % LAYER_COLOR_PALETTE.length];
+    const newLayer: Layer = { id: genId('layer'), name: layerName, category, color, visible: true };
+    pushHistory();
     setLayers((prev) => [...prev, newLayer]);
   };
 
-  const deleteLayer = (id: string) => {
+  const deleteLayer = async (id: string) => {
     if (layers.length <= 1) {
-      window.alert('레이어가 최소 1개는 있어야 해요.');
+      dialogs.notify('레이어가 최소 1개는 있어야 해요.');
       return;
     }
     const layer = layers.find((l) => l.id === id);
     const affected = shapes.filter((s) => s.layer === id).length;
-    const message = affected > 0
-      ? `"${layer?.name}" 레이어를 삭제하면 이 레이어의 도형 ${affected}개도 함께 삭제됩니다. 삭제할까요?`
-      : `"${layer?.name}" 레이어를 삭제할까요?`;
-    if (!window.confirm(message)) return;
+    const ok = await dialogs.confirm({
+      title: '레이어 삭제',
+      message: affected > 0
+        ? `"${layer?.name}" 레이어와 이 레이어의 도형 ${affected}개를 함께 삭제할까요? 실행 취소로 되돌릴 수 있어요.`
+        : `"${layer?.name}" 레이어를 삭제할까요?`,
+      confirmLabel: '삭제',
+      danger: true,
+    });
+    if (!ok) return;
 
-    if (affected > 0) pushHistory();
+    pushHistory();
     setLayers((prev) => prev.filter((l) => l.id !== id));
     setShapes((prev) => prev.filter((s) => s.layer !== id));
     setMergeSelection((prev) => prev.filter((x) => x !== id));
@@ -151,20 +181,26 @@ export default function EditorPage() {
     cancelMerge();
   };
 
-  const handleAddLine = (lengthMm: number, angleDeg: number, thicknessMm?: number) => {
+  /** exactEnd를 넘기면(마우스로 끝점을 찍은 경우) 길이·각도로 다시 계산하지 않고 그 점을 그대로 끝점으로 쓴다 — 반올림된 길이·각도로 역산하면 스냅한 지점에서 1~2mm 어긋난다 */
+  const handleAddLine = (lengthMm: number, angleDeg: number, thicknessMm?: number, exactEnd?: Point) => {
     pushHistory();
     const start = pendingPoint;
-    const end = pointFromPolar(start, lengthMm, angleDeg);
+    const end = exactEnd ?? pointFromPolar(start, lengthMm, angleDeg);
     const id = genId('line');
     setShapes((prev) => [...prev, { id, layer: activeLayerId, kind: 'line', start, end, lengthMm, angleDeg, thicknessMm }]);
     setPendingPoint(end);
     setSelectedIds([id]);
   };
 
+  /** 기둥 레이어에 그리는 원·사각형에는 C1, C2 … 번호를 자동으로 붙인다 */
+  const columnLabel = (): string | undefined => (
+    layers.find((l) => l.id === activeLayerId)?.category === 'column' ? nextNumberedLabel(shapes, COLUMN_LABEL_PREFIX) : undefined
+  );
+
   const handleAddCircle = (radiusMm: number) => {
     pushHistory();
     const id = genId('circle');
-    setShapes((prev) => [...prev, { id, layer: activeLayerId, kind: 'circle', center: pendingPoint, radiusMm }]);
+    setShapes((prev) => [...prev, { id, layer: activeLayerId, kind: 'circle', center: pendingPoint, radiusMm, label: columnLabel() }]);
     setSelectedIds([id]);
   };
 
@@ -173,21 +209,22 @@ export default function EditorPage() {
     pushHistory();
     const id = genId('rect');
     const resolvedCenter = center ?? { x: pendingPoint.x + widthMm / 2, y: pendingPoint.y + heightMm / 2 };
-    setShapes((prev) => [...prev, { id, layer: activeLayerId, kind: 'rect', center: resolvedCenter, widthMm, heightMm }]);
+    setShapes((prev) => [...prev, { id, layer: activeLayerId, kind: 'rect', center: resolvedCenter, widthMm, heightMm, label: columnLabel() }]);
     setSelectedIds([id]);
   };
 
   const handleAddSprinklerHead = (radiusMm: number) => {
     pushHistory();
     const id = genId('circle');
-    setShapes((prev) => [...prev, { id, layer: activeLayerId, kind: 'circle', center: pendingPoint, radiusMm, sprinklerHead: true }]);
+    const label = nextNumberedLabel(shapes, SPRINKLER_LABEL_PREFIX);
+    setShapes((prev) => [...prev, { id, layer: activeLayerId, kind: 'circle', center: pendingPoint, radiusMm, sprinklerHead: true, label }]);
     setSelectedIds([id]);
   };
 
   /** 캔버스 클릭으로 시작점/중심점을 정할 때 호출 — 무장 상태라면 다음 클릭은 끝점을 찍는 차례로 넘어간다 */
   const handleCanvasClick = (point: Point) => {
     setPendingPoint(point);
-    if (drawArmed) setDrawPhase('end');
+    if (armed) setDrawPhase('end');
   };
 
   /** 마우스로 그리기 무장 상태에서 캔버스 클릭으로 확정될 때 호출 — pendingPoint(시작점/중심점)를 기준으로 실제 도형을 만든다 */
@@ -200,7 +237,7 @@ export default function EditorPage() {
       const { lengthMm, angleDeg } = lengthAndAngleBetween(pendingPoint, point);
       if (lengthMm > 0) {
         const thickness = parseFloat(drawForm.thicknessMm);
-        handleAddLine(lengthMm, angleDeg, isBeam && Number.isFinite(thickness) && thickness > 0 ? thickness : undefined);
+        handleAddLine(lengthMm, angleDeg, isBeam && Number.isFinite(thickness) && thickness > 0 ? thickness : undefined, point);
       }
     } else if (drawMode === 'circle') {
       if (canPickRectShape && drawForm.columnShape === 'rect') {
@@ -230,10 +267,6 @@ export default function EditorPage() {
     setSelectedIds([id]);
   };
 
-  const handleDragStart = () => {
-    pushHistory();
-  };
-
   const handleResetPending = () => {
     setPendingPoint(ORIGIN);
     setDrawPhase('start');
@@ -241,14 +274,16 @@ export default function EditorPage() {
   };
 
   const handleExportPdf = async () => {
-    const svg = canvasRef.current?.getSvgElement();
-    if (!svg || shapes.length === 0 || exportingPdf) return;
+    if (exportingPdf) return;
+    if (shapes.length === 0) {
+      dialogs.notify('저장할 도형이 없어요. 먼저 도면을 그려 주세요.');
+      return;
+    }
     setExportingPdf(true);
     try {
-      const dateStamp = new Date().toISOString().slice(0, 10);
-      await exportDrawingAsPdf(svg, shapes, `도면_${dateStamp}.pdf`);
+      await exportDrawingAsPdf({ name, shapes, layers, review, showUncovered });
     } catch (err) {
-      window.alert('PDF 저장에 실패했어요. 다시 시도해 주세요.');
+      dialogs.notify('PDF 저장에 실패했어요. 다시 시도해 주세요.');
       console.error(err);
     } finally {
       setExportingPdf(false);
@@ -256,16 +291,26 @@ export default function EditorPage() {
   };
 
   const handleUndo = () => {
-    if (history.length === 0) return;
-    const previous = history[history.length - 1];
-    setShapes(previous);
-    setHistory((prev) => prev.slice(0, -1));
+    if (!drawing.undo()) return;
     setSelectedIds([]);
+    setDrawPhase('start');
   };
 
-  const handleClearAll = () => {
+  const handleRedo = () => {
+    if (!drawing.redo()) return;
+    setSelectedIds([]);
+    setDrawPhase('start');
+  };
+
+  const handleClearAll = async () => {
     if (shapes.length === 0) return;
-    if (!window.confirm('캔버스의 모든 도형을 삭제합니다. 되돌릴 수 없어요. 계속할까요?')) return;
+    const ok = await dialogs.confirm({
+      title: '전체 지우기',
+      message: '캔버스의 모든 도형을 지울까요? 레이어는 그대로 남고, 실행 취소로 되돌릴 수 있어요.',
+      confirmLabel: '전체 지우기',
+      danger: true,
+    });
+    if (!ok) return;
     pushHistory();
     setShapes([]);
     setSelectedIds([]);
@@ -289,59 +334,162 @@ export default function EditorPage() {
   };
 
   const handleUpdateLine = (id: string, lengthMm: number, angleDeg: number, thicknessMm?: number) => {
+    const target = shapes.find((s) => s.id === id);
+    if (!target || target.kind !== 'line') return;
+    const nextThickness = thicknessMm !== undefined ? thicknessMm : target.thicknessMm;
+    // 값이 그대로면(입력칸을 건드리지 않고 벗어난 경우 등) 실행취소 기록도 끝점 재계산도 하지 않는다
+    if (target.lengthMm === lengthMm && target.angleDeg === angleDeg && target.thicknessMm === nextThickness) return;
     pushHistory();
     setShapes((prev) => prev.map((s) => {
       if (s.id !== id || s.kind !== 'line') return s;
       const end = pointFromPolar(s.start, lengthMm, angleDeg);
-      return { ...s, lengthMm, angleDeg, end, thicknessMm: thicknessMm !== undefined ? thicknessMm : s.thicknessMm };
+      return { ...s, lengthMm, angleDeg, end, thicknessMm: nextThickness };
     }));
   };
 
   const handleUpdateCircle = (id: string, radiusMm: number) => {
+    const target = shapes.find((s) => s.id === id);
+    if (!target || target.kind !== 'circle' || target.radiusMm === radiusMm) return;
     pushHistory();
     setShapes((prev) => prev.map((s) => (s.id === id && s.kind === 'circle' ? { ...s, radiusMm } : s)));
   };
 
+  /** 그릴 때와 같은 기준(좌상단 꼭짓점 고정)으로 크기를 바꾼다 — 오른쪽·아래쪽으로만 늘어나거나 줄어든다 */
   const handleUpdateRect = (id: string, widthMm: number, heightMm: number) => {
+    const target = shapes.find((s) => s.id === id);
+    if (!target || target.kind !== 'rect' || (target.widthMm === widthMm && target.heightMm === heightMm)) return;
     pushHistory();
-    setShapes((prev) => prev.map((s) => (s.id === id && s.kind === 'rect' ? { ...s, widthMm, heightMm } : s)));
+    setShapes((prev) => prev.map((s) => {
+      if (s.id !== id || s.kind !== 'rect') return s;
+      const center = { x: s.center.x + (widthMm - s.widthMm) / 2, y: s.center.y + (heightMm - s.heightMm) / 2 };
+      return { ...s, center, widthMm, heightMm };
+    }));
   };
 
   const handleUpdateText = (id: string, text: string) => {
+    const target = shapes.find((s) => s.id === id);
+    if (!target || target.kind !== 'text' || target.text === text) return;
     pushHistory();
     setShapes((prev) => prev.map((s) => (s.id === id && s.kind === 'text' ? { ...s, text } : s)));
+  };
+
+  /** 원·사각형의 라벨(SP-1, C1 등) 수정 — 빈 문자열이면 라벨을 지운다 */
+  const handleUpdateLabel = (id: string, label: string) => {
+    const target = shapes.find((s) => s.id === id);
+    if (!target || (target.kind !== 'circle' && target.kind !== 'rect')) return;
+    const next = label.trim() || undefined;
+    if (target.label === next) return;
+    pushHistory();
+    setShapes((prev) => prev.map((s) => (s.id === id && (s.kind === 'circle' || s.kind === 'rect') ? { ...s, label: next } : s)));
   };
 
   const handleCopySelected = () => {
     const selected = shapes.filter((s) => selectedIds.includes(s.id));
     if (selected.length === 0) return;
     setClipboard(selected);
+    dialogs.notify(`도형 ${selected.length}개를 복사했어요. 붙여넣기(Ctrl+V)로 복제할 수 있어요.`);
   };
 
   const handlePasteShape = () => {
     if (clipboard.length === 0) return;
     pushHistory();
+    // 자동 번호 라벨(SP-1, C1 …)은 겹치지 않게 새 번호를 매긴다
+    const numbered: Shape[] = [...shapes];
     const pasted = clipboard.map((shape) => {
       const layerStillExists = layers.some((l) => l.id === shape.layer);
-      return { ...translateShape(shape, PASTE_OFFSET, PASTE_OFFSET), id: genId(shape.kind), layer: layerStillExists ? shape.layer : activeLayerId };
+      const copy: Shape = { ...translateShape(shape, PASTE_OFFSET, PASTE_OFFSET), id: genId(shape.kind), layer: layerStillExists ? shape.layer : activeLayerId };
+      if (copy.kind === 'circle' || copy.kind === 'rect') {
+        const prefix = numberedLabelPrefix(copy.label);
+        if (prefix) copy.label = nextNumberedLabel(numbered, prefix);
+      }
+      numbered.push(copy);
+      return copy;
     });
     setShapes((prev) => [...prev, ...pasted]);
+    // 붙여넣은 도형이 지금 그리는 레이어 밖에 있으면 선택·이동이 안 되므로, 전체 레이어로 넘어가 바로 옮길 수 있게 한다
+    if (activeLayerId !== ALL_LAYERS_ID && pasted.some((s) => s.layer !== activeLayerId)) {
+      setActiveLayerId(ALL_LAYERS_ID);
+    }
+    setDrawMode('select');
+    setDrawArmed(false);
+    setDrawPhase('start');
     setSelectedIds(pasted.map((s) => s.id));
   };
 
-  // 키보드 단축키: Delete=삭제, Ctrl+C=복사, Ctrl+V=붙여넣기 (입력창 포커스 중엔 무시)
+  const handleNudgeSelected = (dx: number, dy: number, isRepeat: boolean) => {
+    if (selectedIds.length === 0) return;
+    // 키를 누르고 있는 동안 반복되는 이동은 처음 한 번만 실행취소 기록에 남긴다
+    if (!isRepeat) pushHistory();
+    handleMoveShapes(selectedIds, dx, dy);
+  };
+
+  /** 방호 검토 경고를 누르면 관련 헤드를 캔버스에서 선택해 보여준다 */
+  const handleSelectReviewShapes = (ids: string[]) => {
+    if (ids.length === 0) return;
+    setActiveLayerId(ALL_LAYERS_ID);
+    setDrawMode('select');
+    setDrawArmed(false);
+    setDrawPhase('start');
+    setSelectedIds(ids);
+    setMobileSheetOpen(false);
+  };
+
+  const resetEditorForNewDrawing = (nextLayers: Layer[]) => {
+    setSelectedIds([]);
+    setClipboard([]);
+    setActiveLayerId(nextLayers[0].id);
+    setDrawMode('select');
+    setDrawArmed(false);
+    setDrawPhase('start');
+    cancelMerge();
+    setCanvasKey((k) => k + 1);
+  };
+
+  const handleNewDrawing = async () => {
+    const ok = await dialogs.confirm({
+      title: '새 도면',
+      message: '지금 도면을 비우고 새로 시작할까요? 필요하면 먼저 "파일로 저장"해 두세요.',
+      confirmLabel: '새로 시작',
+      danger: true,
+    });
+    if (!ok) return;
+    const nextLayers = dummyLayers.map((l) => ({ ...l, visible: true }));
+    drawing.replaceDrawing({ name: DEFAULT_DRAWING_NAME, layers: nextLayers, shapes: [] });
+    resetEditorForNewDrawing(nextLayers);
+  };
+
+  const handleSaveFile = () => {
+    downloadDrawingFile({ name, layers, shapes });
+  };
+
+  const handleLoadFile = async (file: File) => {
+    const loaded = await readDrawingFile(file);
+    if (!loaded) {
+      dialogs.notify('도면 파일을 읽지 못했어요. 이 앱에서 저장한 파일인지 확인해 주세요.');
+      return;
+    }
+    drawing.replaceDrawing(loaded);
+    resetEditorForNewDrawing(loaded.layers);
+    dialogs.notify(`"${loaded.name}" 도면을 불러왔어요.`);
+  };
+
+  // 키보드 단축키 (입력창 포커스 중이거나 모달이 떠 있으면 무시)
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (isEditableTarget(e.target) || guideOpen) return;
+      if (isEditableTarget(e.target) || guideOpen || dialogs.isConfirmOpen) return;
 
-      if (e.key === 'Escape' && drawArmed) {
+      if (e.key === 'Escape' && armed) {
         e.preventDefault();
-        // 끝점을 찍는 중이었다면 진행 중인 도형만 취소하고, 이미 시작점 차례라면 마우스 그리기 자체를 끈다
+        // 끝점을 찍는 중이었다면 진행 중인 도형만 취소하고, 이미 시작점 차례라면 그리기를 끝내고 선택 도구로 돌아간다
         if (drawPhase === 'end') {
           setDrawPhase('start');
         } else {
-          setDrawArmed(false);
+          handleModeChange('select');
         }
+        return;
+      }
+      if (e.key === 'Escape' && selectedIds.length > 0) {
+        setSelectedIds([]);
         return;
       }
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIds.length > 0) {
@@ -349,12 +497,23 @@ export default function EditorPage() {
         handleDeleteSelected();
         return;
       }
+      const arrow = ARROW_DELTAS[e.key];
+      if (arrow && selectedIds.length > 0 && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        const step = e.shiftKey ? NUDGE_LARGE_MM : NUDGE_MM;
+        handleNudgeSelected(arrow.x * step, arrow.y * step, e.repeat);
+        return;
+      }
       if (e.ctrlKey || e.metaKey) {
-        if (e.key.toLowerCase() === 'c' && selectedIds.length > 0) {
+        const key = e.key.toLowerCase();
+        if (key === 'c' && selectedIds.length > 0) {
           handleCopySelected();
-        } else if (e.key.toLowerCase() === 'v') {
+        } else if (key === 'v') {
           handlePasteShape();
-        } else if (e.key.toLowerCase() === 'z') {
+        } else if (key === 'y' || (key === 'z' && e.shiftKey)) {
+          e.preventDefault();
+          handleRedo();
+        } else if (key === 'z') {
           e.preventDefault();
           handleUndo();
         }
@@ -362,8 +521,8 @@ export default function EditorPage() {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedIds, shapes, clipboard, guideOpen, layers, activeLayerId, drawArmed, drawPhase]);
+    // 핸들러들이 매 렌더마다 새로 만들어지므로 의존성 없이 항상 최신 것을 다시 건다
+  });
 
   const selectedShapes = shapes.filter((s) => selectedIds.includes(s.id));
   const activeLayer = layers.find((l) => l.id === activeLayerId);
@@ -375,7 +534,21 @@ export default function EditorPage() {
 
   return (
     <div className="app-shell" data-mobile-sheet={mobileSheetOpen ? 'open' : 'closed'}>
-      <Header onOpenGuide={() => setGuideOpen(true)} onExportPdf={handleExportPdf} exportingPdf={exportingPdf} />
+      <Header
+        onOpenGuide={() => setGuideOpen(true)}
+        onExportPdf={handleExportPdf}
+        exportingPdf={exportingPdf}
+        drawingMenu={(
+          <DrawingMenu
+            name={name}
+            onRename={drawing.setName}
+            onNewDrawing={handleNewDrawing}
+            onSaveFile={handleSaveFile}
+            onLoadFile={handleLoadFile}
+            saveFailed={drawing.saveFailed}
+          />
+        )}
+      />
 
       <MobileLayerStrip
         layers={layers}
@@ -392,9 +565,11 @@ export default function EditorPage() {
             mode={drawMode}
             onModeChange={handleModeChange}
             pendingPoint={pendingPoint}
-            drawArmed={drawArmed}
+            drawArmed={armed}
             onToggleDrawArmed={handleToggleDrawArmed}
             drawPhase={drawPhase}
+            orthoLock={orthoLock}
+            onToggleOrthoLock={() => setOrthoLock((prev) => !prev)}
             drawForm={drawForm}
             onDrawFormChange={updateDrawForm}
             onAddLine={handleAddLine}
@@ -404,7 +579,9 @@ export default function EditorPage() {
             onAddText={handleAddText}
             onResetPending={handleResetPending}
             onUndo={handleUndo}
-            canUndo={history.length > 0}
+            canUndo={drawing.canUndo}
+            onRedo={handleRedo}
+            canRedo={drawing.canRedo}
             onClearAll={handleClearAll}
             canClearAll={shapes.length > 0}
           />
@@ -423,10 +600,17 @@ export default function EditorPage() {
             onToggleMergeSelect={toggleMergeSelect}
             onConfirmMerge={confirmMerge}
           />
+          <ReviewPanel
+            review={review}
+            showUncovered={showUncovered}
+            onToggleUncovered={() => setShowUncovered((prev) => !prev)}
+            onSelectShapes={handleSelectReviewShapes}
+          />
         </aside>
 
         <main className="editor-canvas-area">
           <CadCanvas
+            key={canvasKey}
             ref={canvasRef}
             shapes={shapes}
             layers={layers}
@@ -436,17 +620,21 @@ export default function EditorPage() {
             mode={drawMode}
             onCanvasClick={handleCanvasClick}
             onMoveShapes={handleMoveShapes}
-            onDragStart={handleDragStart}
+            onDragStart={pushHistory}
             onUndo={handleUndo}
-            canUndo={history.length > 0}
+            canUndo={drawing.canUndo}
+            onRedo={handleRedo}
+            canRedo={drawing.canRedo}
             activeLayerId={activeLayerId}
             onDeleteSelected={handleDeleteSelected}
             onResetPending={handleResetPending}
             onTrimLine={handleTrimLine}
-            drawArmed={drawArmed}
+            drawArmed={armed}
             drawPhase={drawPhase}
             onFinishDraw={handleFinishDraw}
             drawPreviewKind={drawPreviewKind}
+            orthoLock={orthoLock}
+            uncoveredRects={showUncovered ? review.uncoveredRects : []}
           />
         </main>
       </div>
@@ -458,6 +646,7 @@ export default function EditorPage() {
           onUpdateCircle={handleUpdateCircle}
           onUpdateRect={handleUpdateRect}
           onUpdateText={handleUpdateText}
+          onUpdateLabel={handleUpdateLabel}
           onDeleteSelected={handleDeleteSelected}
           onCopySelected={handleCopySelected}
           onPasteShape={handlePasteShape}
@@ -488,6 +677,7 @@ export default function EditorPage() {
       />
 
       {guideOpen && <LawGuideModal onClose={() => setGuideOpen(false)} />}
+      {dialogs.element}
     </div>
   );
 }

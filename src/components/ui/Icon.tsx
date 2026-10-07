@@ -13,6 +13,15 @@ export function IconLine({ className = '' }: IconProps) {
   );
 }
 
+export function IconCursor({ className = '' }: IconProps) {
+  return (
+    <svg className={`${base} ${className}`} viewBox="0 0 24 24">
+      <path d="M5 4l5.5 15 2.2-6.3L19 10.5z" />
+      <line x1="13.5" y1="13.5" x2="19" y2="19" />
+    </svg>
+  );
+}
+
 export function IconCircle({ className = '' }: IconProps) {
   return (
     <svg className={`${base} ${className}`} viewBox="0 0 24 24">
@@ -253,6 +262,61 @@ export function IconMerge({ className = '' }: IconProps) {
       <path d="M8 3v6a3 3 0 0 0 3 3h2a3 3 0 0 0 3-3V3" />
       <path d="M12 12v9" />
       <polyline points="9,18 12,21 15,18" />
+    </svg>
+  );
+}
+
+export function IconRedo({ className = '' }: IconProps) {
+  return (
+    <svg className={`${base} ${className}`} viewBox="0 0 24 24">
+      <path d="M16 8h4V4" />
+      <path d="M20 8a9 9 0 1 0-2.6 8.4" />
+    </svg>
+  );
+}
+
+export function IconFile({ className = '' }: IconProps) {
+  return (
+    <svg className={`${base} ${className}`} viewBox="0 0 24 24">
+      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+      <polyline points="14,3 14,8 19,8" />
+    </svg>
+  );
+}
+
+export function IconFolderOpen({ className = '' }: IconProps) {
+  return (
+    <svg className={`${base} ${className}`} viewBox="0 0 24 24">
+      <path d="M4 19V6a2 2 0 0 1 2-2h4l2 3h6a2 2 0 0 1 2 2v2" />
+      <path d="M4 19l2.5-8h15L19 19z" />
+    </svg>
+  );
+}
+
+export function IconShield({ className = '' }: IconProps) {
+  return (
+    <svg className={`${base} ${className}`} viewBox="0 0 24 24">
+      <path d="M12 3l8 3v6c0 4.5-3.2 8-8 9-4.8-1-8-4.500-8-9V6z" />
+      <polyline points="8.500,12 11,14.500 15.500,9.500" />
+    </svg>
+  );
+}
+
+export function IconAlert({ className = '' }: IconProps) {
+  return (
+    <svg className={`${base} ${className}`} viewBox="0 0 24 24">
+      <path d="M12 4l9 16H3z" />
+      <line x1="12" y1="10" x2="12" y2="14" />
+      <circle cx="12" cy="17" r="0.9" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+export function IconOrtho({ className = '' }: IconProps) {
+  return (
+    <svg className={`${base} ${className}`} viewBox="0 0 24 24">
+      <polyline points="5,4 5,19 20,19" />
+      <polyline points="5,14 10,14 10,19" />
     </svg>
   );
 }

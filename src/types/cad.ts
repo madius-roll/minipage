@@ -59,3 +59,27 @@ export interface ArcShape extends BaseShape {
 }
 
 export type Shape = LineShape | CircleShape | RectShape | TextShape | ArcShape;
+
+/**
+ * 바탕 도면 — 사진·이미지·PDF를 캔버스 바닥에 깔아 두고 그 위에 그린다.
+ * 원근 보정을 마친 이미지 한 장과, 그 이미지를 도면 좌표(mm)에 어떻게 놓을지(위치·축척)를 담는다.
+ */
+export interface Underlay {
+  /** 화면에 그릴 때 쓰는 임시 주소(object URL) — 저장할 때는 blob을 따로 보관한다 */
+  imageUrl: string;
+  blob: Blob;
+  widthPx: number;
+  heightPx: number;
+  /** 이미지 좌상단이 놓이는 도면 좌표(mm) */
+  origin: Point;
+  /** 이미지 1px이 실제로 몇 mm인지 (축척 맞춤의 결과) */
+  mmPerPx: number;
+  /** 종이 위 크기를 아는 경우(PDF, 용지 크기를 지정한 사진)에만 — 이미지 1px이 종이에서 몇 mm인지. 있으면 "1:N" 축척 입력을 쓸 수 있다 */
+  paperMmPerPx?: number;
+  opacity: number;
+  /** 흰 종이를 어두운 캔버스에 맞게 반전해 보여준다 */
+  invert: boolean;
+  /** 흑백으로 바꾸고 대비를 올려 그림자·누런 종이색을 걷어낸다 */
+  enhance: boolean;
+  visible: boolean;
+}

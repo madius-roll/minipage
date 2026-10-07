@@ -61,6 +61,12 @@ export interface DrawFormState {
   heightMm: string;
   columnShape: ColumnShape;
   textValue: string;
+  /** SP헤드 배열 배치 — 켜면 시작점부터 가로·세로 간격으로 여러 개를 한 번에 놓는다 */
+  arrayOn: boolean;
+  arrayCols: string;
+  arrayRows: string;
+  arrayGapX: string;
+  arrayGapY: string;
 }
 
 export const DEFAULT_DRAW_FORM: DrawFormState = {
@@ -72,7 +78,15 @@ export const DEFAULT_DRAW_FORM: DrawFormState = {
   heightMm: '400',
   columnShape: 'circle',
   textValue: '',
+  arrayOn: false,
+  arrayCols: '3',
+  arrayRows: '2',
+  arrayGapX: '3200',
+  arrayGapY: '3200',
 };
+
+/** 배열 배치로 한 번에 놓을 수 있는 헤드 수 상한 — 실수로 큰 수를 넣어 화면이 멈추는 것을 막는다 */
+export const MAX_ARRAY_HEADS = 400;
 
 interface ToolPanelProps {
   layers: Layer[];
@@ -95,6 +109,7 @@ interface ToolPanelProps {
   onAddCircle: (radiusMm: number) => void;
   onAddRect: (widthMm: number, heightMm: number) => void;
   onAddSprinklerHead: (radiusMm: number) => void;
+  onAddSprinklerArray: (radiusMm: number, cols: number, rows: number, gapXMm: number, gapYMm: number) => void;
   onAddText: (text: string) => void;
   onResetPending: () => void;
   onUndo: () => void;
@@ -124,6 +139,7 @@ export default function ToolPanel({
   onAddCircle,
   onAddRect,
   onAddSprinklerHead,
+  onAddSprinklerArray,
   onAddText,
   onResetPending,
   onUndo,
@@ -133,7 +149,7 @@ export default function ToolPanel({
   onClearAll,
   canClearAll,
 }: ToolPanelProps) {
-  const { lengthMm, angleDeg, thicknessMm, radiusMm, widthMm, heightMm, columnShape, textValue } = drawForm;
+  const { lengthMm, angleDeg, thicknessMm, radiusMm, widthMm, heightMm, columnShape, textValue, arrayOn, arrayCols, arrayRows, arrayGapX, arrayGapY } = drawForm;
 
   const isAllLayers = activeLayerId === ALL_LAYERS_ID;
   const activeLayer = layers.find((l) => l.id === activeLayerId);
@@ -153,6 +169,12 @@ export default function ToolPanel({
   const circleValid = Number.isFinite(radius) && radius > 0;
   const rectValid = Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0;
   const textValid = textValue.trim().length > 0;
+  const cols = parseInt(arrayCols, 10);
+  const rows = parseInt(arrayRows, 10);
+  const gapX = parseFloat(arrayGapX);
+  const gapY = parseFloat(arrayGapY);
+  const arrayCount = cols * rows;
+  const arrayValid = cols >= 1 && rows >= 1 && arrayCount <= MAX_ARRAY_HEADS && (cols === 1 || gapX > 0) && (rows === 1 || gapY > 0);
 
   const handleSubmitLine = (e: FormEvent) => {
     e.preventDefault();
@@ -183,6 +205,12 @@ export default function ToolPanel({
   const handleSubmitSprinklerHead = (e: FormEvent) => {
     e.preventDefault();
     if (!circleValid) return;
+    if (arrayOn) {
+      if (!arrayValid) return;
+      // 배열은 같은 값으로 여러 번 이어 놓는 일이 많아 입력값을 그대로 남겨 둔다
+      onAddSprinklerArray(radius, cols, rows, cols > 1 ? gapX : 0, rows > 1 ? gapY : 0);
+      return;
+    }
     onAddSprinklerHead(radius);
     onDrawFormChange({ radiusMm: '' });
   };
@@ -304,7 +332,39 @@ export default function ToolPanel({
             <label htmlFor="sp-radius">방호 반경 (mm)</label>
             <input id="sp-radius" type="number" min="1" placeholder="예: 2600" value={radiusMm} onChange={(e) => onDrawFormChange({ radiusMm: e.target.value })} />
           </div>
-          <Button type="submit" size="sm" disabled={!circleValid} className="tool-submit">SP헤드반경 추가</Button>
+          <Button type="button" size="sm" variant="ghost" active={arrayOn} onClick={() => onDrawFormChange({ arrayOn: !arrayOn })} className="tool-submit">
+            배열로 여러 개 {arrayOn ? 'ON' : 'OFF'}
+          </Button>
+          {arrayOn && (
+            <>
+              <div className="tool-array-grid">
+                <div className="field">
+                  <label htmlFor="array-cols">가로 개수</label>
+                  <input id="array-cols" type="number" inputMode="numeric" min="1" value={arrayCols} onChange={(e) => onDrawFormChange({ arrayCols: e.target.value })} />
+                </div>
+                <div className="field">
+                  <label htmlFor="array-rows">세로 개수</label>
+                  <input id="array-rows" type="number" inputMode="numeric" min="1" value={arrayRows} onChange={(e) => onDrawFormChange({ arrayRows: e.target.value })} />
+                </div>
+                <div className="field">
+                  <label htmlFor="array-gap-x">가로 간격 (mm)</label>
+                  <input id="array-gap-x" type="number" inputMode="decimal" min="1" value={arrayGapX} onChange={(e) => onDrawFormChange({ arrayGapX: e.target.value })} />
+                </div>
+                <div className="field">
+                  <label htmlFor="array-gap-y">세로 간격 (mm)</label>
+                  <input id="array-gap-y" type="number" inputMode="decimal" min="1" value={arrayGapY} onChange={(e) => onDrawFormChange({ arrayGapY: e.target.value })} />
+                </div>
+              </div>
+              <p className="tool-hint tool-array-hint">
+                {arrayCount > MAX_ARRAY_HEADS
+                  ? `한 번에 ${MAX_ARRAY_HEADS}개까지만 놓을 수 있어요.`
+                  : '중심점이 왼쪽 위 첫 헤드가 되고, 오른쪽·아래쪽으로 채워져요.'}
+              </p>
+            </>
+          )}
+          <Button type="submit" size="sm" disabled={!circleValid || (arrayOn && !arrayValid)} className="tool-submit">
+            {arrayOn && arrayValid ? `SP헤드 ${arrayCount}개 추가` : 'SP헤드반경 추가'}
+          </Button>
         </form>
       ) : (
         <form className="tool-form" onSubmit={handleSubmitPoint}>

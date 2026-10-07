@@ -320,3 +320,42 @@ export function IconOrtho({ className = '' }: IconProps) {
     </svg>
   );
 }
+
+export function IconCamera({ className = '' }: IconProps) {
+  return (
+    <svg className={`${base} ${className}`} viewBox="0 0 24 24">
+      <path d="M4 8h3l1.5-2.5h7L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z" />
+      <circle cx="12" cy="13" r="3.5" />
+    </svg>
+  );
+}
+
+export function IconImage({ className = '' }: IconProps) {
+  return (
+    <svg className={`${base} ${className}`} viewBox="0 0 24 24">
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <circle cx="8.5" cy="9.5" r="1.5" />
+      <polyline points="4,18 10,12 14,16 17,13 20,16" />
+    </svg>
+  );
+}
+
+export function IconRuler({ className = '' }: IconProps) {
+  return (
+    <svg className={`${base} ${className}`} viewBox="0 0 24 24">
+      <path d="M3 16L16 3l5 5L8 21z" />
+      <line x1="7.5" y1="11.5" x2="9.5" y2="13.5" />
+      <line x1="10.5" y1="8.5" x2="12.5" y2="10.5" />
+      <line x1="13.5" y1="5.5" x2="15.500" y2="7.5" />
+    </svg>
+  );
+}
+
+export function IconRotate({ className = '' }: IconProps) {
+  return (
+    <svg className={`${base} ${className}`} viewBox="0 0 24 24">
+      <path d="M20 4v5h-5" />
+      <path d="M20 9a8 8 0 1 0 1.500 6" />
+    </svg>
+  );
+}

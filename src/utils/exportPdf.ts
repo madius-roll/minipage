@@ -1,5 +1,6 @@
 import jsPDF from 'jspdf';
-import type { Layer, Shape } from '../types/cad';
+import type { Layer, Shape, Underlay } from '../types/cad';
+import { renderForPrint } from './imageWarp';
 import { computeSprinklerCoveragePolygon, DEFAULT_LINE_THICKNESS_MM, formatMeters, getBounds, TEXT_FONT_SIZE_MM } from './geometry';
 import type { ReviewResult } from './review';
 import { toFileBaseName } from './storage';
@@ -11,7 +12,12 @@ export interface ExportOptions {
   review: ReviewResult;
   /** 화면에서 미방호 구역 표시를 켜 두었으면 인쇄본에도 함께 칠한다 */
   showUncovered: boolean;
+  /** 바탕 도면 — 화면에서 보이게 해 두었으면 인쇄본 바닥에도 깐다 */
+  underlay: Underlay | null;
 }
+
+/** 인쇄본에서 바탕 도면의 진하기 — 그 위에 그린 헤드와 글자가 묻히지 않을 만큼만 옅게 */
+const PRINT_UNDERLAY_OPACITY = 0.6;
 
 /*
  * 인쇄용 도면 한 장(A4 가로)의 배치. 단위는 모두 종이 위 mm.
@@ -63,7 +69,7 @@ function pickScale(widthMm: number, heightMm: number): number {
 }
 
 /** 도면 칸에 들어갈 SVG를 직접 조립한다 — 화면 캔버스(어두운 배경·편집용 표시)와 달리 흰 종이에 맞춘 색과 굵기를 쓴다 */
-function buildDrawingSvg(options: ExportOptions, scale: number, centerX: number, centerY: number): string {
+function buildDrawingSvg(options: ExportOptions, scale: number, centerX: number, centerY: number, underlayDataUrl: string | null): string {
   const { shapes, layers, review, showUncovered } = options;
   const layerMap = new Map(layers.map((l) => [l.id, l]));
   const visible = shapes.filter((s) => layerMap.get(s.layer)?.visible !== false);
@@ -84,6 +90,11 @@ function buildDrawingSvg(options: ExportOptions, scale: number, centerX: number,
   const text = (x: number, y: number, content: string, size: number, fill: string, anchor = 'middle', weight = 500) => (
     `<text x="${x}" y="${y}" font-size="${size}" font-weight="${weight}" fill="${fill}" text-anchor="${anchor}" dominant-baseline="central">${escapeXml(content)}</text>`
   );
+
+  const { underlay } = options;
+  if (underlay && underlayDataUrl) {
+    parts.push(`<image href="${underlayDataUrl}" x="${underlay.origin.x}" y="${underlay.origin.y}" width="${underlay.widthPx * underlay.mmPerPx}" height="${underlay.heightPx * underlay.mmPerPx}" preserveAspectRatio="none" opacity="${PRINT_UNDERLAY_OPACITY}"/>`);
+  }
 
   if (showUncovered) {
     for (const r of review.uncoveredRects) {
@@ -112,7 +123,7 @@ function buildDrawingSvg(options: ExportOptions, scale: number, centerX: number,
     } else if (shape.kind === 'rect') {
       const x = shape.center.x - shape.widthMm / 2;
       const y = shape.center.y - shape.heightMm / 2;
-      bodies.push(`<rect x="${x}" y="${y}" width="${shape.widthMm}" height="${shape.heightMm}" fill="${color}" fill-opacity="${category === 'column' ? 0.45 : 0.12}" stroke="${color}" stroke-width="${outline}"/>`);
+      bodies.push(`<rect x="${x}" y="${y}" width="${shape.widthMm}" height="${shape.heightMm}" fill="${color}" fill-opacity="${category === 'column' ? 0.45 : 0.04}" stroke="${color}" stroke-width="${outline}"/>`);
       if (shape.label) labels.push(text(shape.center.x, y - gap, shape.label, fontLabel, INK));
       else labels.push(text(shape.center.x, y + shape.heightMm + gap, `${formatMeters(shape.widthMm)} × ${formatMeters(shape.heightMm)}`, fontDim, INK_SUB));
     } else if (shape.kind === 'text') {
@@ -169,13 +180,28 @@ function pickScaleBarMm(scale: number): number {
  */
 export async function renderDrawingSheet(options: ExportOptions): Promise<{ canvas: HTMLCanvasElement; scale: number }> {
   const { name, shapes, layers, review, showUncovered } = options;
+  const underlay = options.underlay?.visible ? options.underlay : null;
   const layerMap = new Map(layers.map((l) => [l.id, l]));
   const visible = shapes.filter((s) => layerMap.get(s.layer)?.visible !== false);
   const bounds = getBounds(visible);
+  if (underlay) {
+    // 바탕 도면 전체가 종이에 들어가도록 범위를 넓힌다 (도형이 하나도 없으면 바탕 도면만으로 범위를 잡는다)
+    const right = underlay.origin.x + underlay.widthPx * underlay.mmPerPx;
+    const bottom = underlay.origin.y + underlay.heightPx * underlay.mmPerPx;
+    if (visible.length === 0) {
+      Object.assign(bounds, { minX: underlay.origin.x, minY: underlay.origin.y, maxX: right, maxY: bottom });
+    } else {
+      bounds.minX = Math.min(bounds.minX, underlay.origin.x);
+      bounds.minY = Math.min(bounds.minY, underlay.origin.y);
+      bounds.maxX = Math.max(bounds.maxX, right);
+      bounds.maxY = Math.max(bounds.maxY, bottom);
+    }
+  }
   const scale = pickScale(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY);
 
   await document.fonts.ready;
-  const svg = buildDrawingSvg(options, scale, (bounds.minX + bounds.maxX) / 2, (bounds.minY + bounds.maxY) / 2);
+  const underlayDataUrl = underlay ? await renderForPrint(underlay.blob, underlay.widthPx, underlay.heightPx, underlay.enhance) : null;
+  const svg = buildDrawingSvg({ ...options, underlay }, scale, (bounds.minX + bounds.maxX) / 2, (bounds.minY + bounds.maxY) / 2, underlayDataUrl);
   const drawingImage = await loadImage(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`);
 
   const canvas = document.createElement('canvas');

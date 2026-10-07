@@ -1,6 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
-import type { ArcShape, CircleShape, Layer, LineShape, Point, RectShape, Shape } from '../../types/cad';
+import type { ArcShape, CircleShape, Layer, LineShape, Point, RectShape, Shape, Underlay } from '../../types/cad';
 import {
   boundsIntersect,
   computeSprinklerCoveragePolygon,
@@ -28,7 +28,7 @@ import { ALL_LAYERS_ID } from '../../data/layerMeta';
 import type { DrawMode } from '../layout/ToolPanel';
 import type { Bounds } from '../../utils/geometry';
 import type { MmRect } from '../../utils/review';
-import { IconFit, IconRedo, IconTarget, IconTrash, IconUndo, IconZoomIn, IconZoomOut } from '../ui/Icon';
+import { IconFit, IconRedo, IconRuler, IconTarget, IconTrash, IconUndo, IconZoomIn, IconZoomOut } from '../ui/Icon';
 import './CadCanvas.css';
 
 interface CadCanvasProps {
@@ -63,6 +63,13 @@ interface CadCanvasProps {
   orthoLock: boolean;
   /** 방호 검토에서 계산한 미방호 구역(mm) — 빈 배열이면 표시하지 않는다 */
   uncoveredRects: MmRect[];
+  /** 바닥에 깔아 둔 도면 사진·PDF — 선택되거나 움직이지 않는 배경이다 */
+  underlay: Underlay | null;
+  /** 거리 재기 모드 — 켜져 있는 동안은 클릭이 선택/그리기 대신 두 점 찍기로 동작한다 */
+  measureMode: boolean;
+  onToggleMeasure: () => void;
+  measure: { a: Point; b: Point | null } | null;
+  onMeasurePoint: (point: Point) => void;
 }
 
 export interface CadCanvasHandle {
@@ -115,7 +122,7 @@ interface PinchState {
 }
 
 const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas(
-  { shapes, layers, selectedIds, onSelect, pendingPoint, mode, onCanvasClick, onMoveShapes, onDragStart, onUndo, canUndo, onRedo, canRedo, activeLayerId, onDeleteSelected, onResetPending, onTrimLine, drawArmed, drawPhase, onFinishDraw, drawPreviewKind, orthoLock, uncoveredRects },
+  { shapes, layers, selectedIds, onSelect, pendingPoint, mode, onCanvasClick, onMoveShapes, onDragStart, onUndo, canUndo, onRedo, canRedo, activeLayerId, onDeleteSelected, onResetPending, onTrimLine, drawArmed, drawPhase, onFinishDraw, drawPreviewKind, orthoLock, uncoveredRects, underlay, measureMode, onToggleMeasure, measure, onMeasurePoint },
   ref,
 ) {
   const svgRef = useRef<SVGSVGElement>(null);
@@ -123,6 +130,8 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
   const [trimMode, setTrimMode] = useState(false);
   /** 마우스로 그리기 무장 상태에서, 커서를 따라다니는 미리보기 끝점/반지름 지점 (스냅 보정 적용됨) */
   const [drawPreview, setDrawPreview] = useState<Point | null>(null);
+  /** 거리 재기에서 첫 점을 찍은 뒤, 커서를 따라다니는 두 번째 점 미리보기 */
+  const [measureHover, setMeasureHover] = useState<Point | null>(null);
   /**
    * originalShapes/totalDx/totalDy: 드래그 시작 시점의 원본 위치 기준 "진짜" 누적 이동량.
    * appliedDx/appliedDy: 지금까지 onMoveShapes로 실제 반영한 누적량(스냅 보정 포함).
@@ -174,7 +183,14 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
    * "화면 맞춤" 버튼을 눌렀을 때만 명시적으로 현재 도형 기준으로 다시 계산한다.
    */
   const computeBaseView = (shapesArg: Shape[], pendingArg: Point) => {
-    const b = getBounds([...shapesArg, { id: '_pending', layer: '_pending', kind: 'circle', center: pendingArg, radiusMm: 400 }]);
+    const extras: Shape[] = [{ id: '_pending', layer: '_pending', kind: 'circle', center: pendingArg, radiusMm: 400 }];
+    // 바탕 도면이 깔려 있으면 그 전체가 보이도록 화면 맞춤 범위에 넣는다
+    if (underlay?.visible) {
+      const widthMm = underlay.widthPx * underlay.mmPerPx;
+      const heightMm = underlay.heightPx * underlay.mmPerPx;
+      extras.push({ id: '_underlay', layer: '_underlay', kind: 'rect', center: { x: underlay.origin.x + widthMm / 2, y: underlay.origin.y + heightMm / 2 }, widthMm, heightMm });
+    }
+    const b = getBounds([...shapesArg, ...extras]);
     const padding = 800;
     return {
       width: b.maxX - b.minX + padding * 2,
@@ -397,6 +413,11 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
     );
   };
 
+  /** 거리 재기용 — 바탕 도면 위의 임의 지점을 재는 일이 많으므로 격자에 반올림하지 않고 mm 단위 그대로 쓴다 */
+  const resolveMeasurePoint = (mm: Point): Point => (
+    findLineGuideSnap(mm, pxToMm(PLACEMENT_SNAP_PRIORITY_PX)) ?? { x: Math.round(mm.x), y: Math.round(mm.y) }
+  );
+
   /**
    * 직교 고정: 끝점을 시작점(pendingPoint) 기준 0°/45°/90° 방향 위로 옮긴다 (사각형은 정사각형이 되게).
    * 스냅으로 잡은 점을 그 방향에 수직으로 내려 맞추므로, 다른 도형의 꼭짓점 높이에 맞춰 수평·수직선을 그릴 수 있다.
@@ -549,6 +570,13 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
       }
     }
 
+    // 거리 재기: 첫 클릭이 A, 두 번째 클릭이 B. 도형의 끝점·중점 가까이를 찍으면 그 점에 붙고, 아니면 찍은 자리 그대로 쓴다.
+    if (measureMode) {
+      onMeasurePoint(resolveMeasurePoint(mm));
+      setMeasureHover(null);
+      return;
+    }
+
     // TR(트림) 모드: 다른 도형과 겹치거나 가로지르는 지점을 클릭하면 그 구간만 잘라낸다. 선택/그리기는 하지 않는다.
     if (trimMode) {
       const target = findNearestTrimTarget(mm, pxToMm(CLICK_TOLERANCE_PX));
@@ -665,6 +693,11 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
 
     const mm = clientToMm(e.clientX, e.clientY);
     if (!mm) return;
+
+    if (measureMode) {
+      setMeasureHover(measure && !measure.b ? resolveMeasurePoint(mm) : null);
+      return;
+    }
 
     if (drawArmed && mode !== 'text') {
       // 시작점을 찍기 전(phase start)에는 도형 미리보기를 그리지 않는다 — pendingPoint가 아직 이번 도형의 기준점이 아니기 때문
@@ -811,7 +844,7 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
     <div className="cad-canvas-wrap">
       <svg
         ref={svgRef}
-        className={`cad-canvas ${spaceHeld ? 'cad-canvas-pan' : drawArmed ? 'cad-canvas-draw-armed' : ''}`}
+        className={`cad-canvas ${spaceHeld ? 'cad-canvas-pan' : drawArmed || measureMode ? 'cad-canvas-draw-armed' : ''}`}
         style={svgStyle}
         viewBox={viewBox}
         preserveAspectRatio="xMidYMid meet"
@@ -819,7 +852,7 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
-        onPointerLeave={() => setDrawPreview(null)}
+        onPointerLeave={() => { setDrawPreview(null); setMeasureHover(null); }}
       >
         <defs>
           <pattern id="grid" width={gridStep} height={gridStep} patternUnits="userSpaceOnUse">
@@ -828,6 +861,22 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
         </defs>
         {/* 캔버스 영역의 가로세로 비율이 도면과 달라 생기는 여백까지 격자로 덮도록 viewBox보다 넉넉하게 깐다 */}
         <rect className="cad-grid-bg" x={centerX - gridSpan / 2} y={centerY - gridSpan / 2} width={gridSpan} height={gridSpan} fill="url(#grid)" />
+
+        {/* 바탕 도면 — 격자 위, 모든 도형 아래 */}
+        {underlay?.visible && (
+          <image
+            className="cad-underlay"
+            href={underlay.imageUrl}
+            x={underlay.origin.x}
+            y={underlay.origin.y}
+            width={underlay.widthPx * underlay.mmPerPx}
+            height={underlay.heightPx * underlay.mmPerPx}
+            preserveAspectRatio="none"
+            opacity={underlay.opacity}
+            style={{ filter: [underlay.enhance ? 'grayscale(1) contrast(1.35)' : '', underlay.invert ? 'invert(1)' : ''].filter(Boolean).join(' ') || undefined }}
+            pointerEvents="none"
+          />
+        )}
 
         {/* 방호 검토: 어느 헤드의 방호범위에도 들지 않는 구역 */}
         {uncoveredRects.length > 0 && (
@@ -904,7 +953,8 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
                   width={shape.widthMm}
                   height={shape.heightMm}
                   fill={color}
-                  fillOpacity={0.35}
+                  // 기둥은 속이 찬 물체라 진하게, 벽체로 그린 방은 안쪽(헤드·바탕 도면)이 보여야 하므로 아주 옅게 칠한다
+                  fillOpacity={layerMap.get(shape.layer)?.category === 'column' ? 0.35 : 0.06}
                   stroke={stroke}
                   strokeWidth={outline}
                 />
@@ -1079,6 +1129,29 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
           );
         })()}
 
+        {/* 거리 재기: A–B 선과 잰 거리 */}
+        {measure && (() => {
+          const end = measure.b ?? measureHover;
+          const mark = (p: Point, key: string) => (
+            <g key={key}>
+              <line x1={p.x - px(7)} y1={p.y} x2={p.x + px(7)} y2={p.y} />
+              <line x1={p.x} y1={p.y - px(7)} x2={p.x} y2={p.y + px(7)} />
+            </g>
+          );
+          return (
+            <g className="cad-measure" pointerEvents="none">
+              {mark(measure.a, 'a')}
+              {end && mark(end, 'b')}
+              {end && <line x1={measure.a.x} y1={measure.a.y} x2={end.x} y2={end.y} strokeDasharray={measure.b ? undefined : dash(6, 4)} />}
+              {end && (
+                <text x={(measure.a.x + end.x) / 2} y={(measure.a.y + end.y) / 2 - px(LABEL_GAP_PX + 2)} textAnchor="middle" dominantBaseline="central">
+                  {formatMeters(distanceMm(measure.a, end))}
+                </text>
+              )}
+            </g>
+          );
+        })()}
+
         {/* 드래그 중 스냅된 꼭짓점 표시 */}
         {snapMarker && (
           <g className="cad-snap-marker" pointerEvents="none">
@@ -1103,6 +1176,14 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
       </svg>
 
       {trimMode && <p className="cad-mode-hint">TR: 다른 도형과 만나는 구간을 클릭하면 그 부분만 잘려요 · Esc로 끝내기</p>}
+      {measureMode && (
+        <p className="cad-mode-hint">
+          {measure?.b
+            ? `잰 거리 ${formatMeters(distanceMm(measure.a, measure.b))} · 다시 찍으면 새로 재요`
+            : measure ? '거리 재기: 끝점(B)을 찍으세요' : '거리 재기: 시작점(A)을 찍으세요'}
+          {' · Esc로 끝내기'}
+        </p>
+      )}
 
       {selectedIds.length > 0 && (
         <button type="button" className="cad-delete-selected" onClick={onDeleteSelected} aria-label="선택한 도형 삭제">
@@ -1123,12 +1204,31 @@ const CadCanvas = forwardRef<CadCanvasHandle, CadCanvasProps>(function CadCanvas
         <button
           type="button"
           className={`cad-zoom-btn ${trimMode ? 'cad-zoom-btn-active' : ''}`}
-          onClick={() => { setTrimMode((v) => !v); onSelect([]); }}
+          onClick={() => {
+            // TR과 거리 재기는 둘 다 클릭의 의미를 바꾸므로 한 번에 하나만 켠다
+            if (!trimMode && measureMode) onToggleMeasure();
+            setTrimMode((v) => !v);
+            onSelect([]);
+          }}
           aria-pressed={trimMode}
           aria-label="TR (겹치는 선 잘라내기)"
           title="TR: 겹치는 선 잘라내기"
         >
           <span className="cad-trim-label">Tr</span>
+        </button>
+        <button
+          type="button"
+          className={`cad-zoom-btn ${measureMode ? 'cad-zoom-btn-active' : ''}`}
+          onClick={() => {
+            if (!measureMode) setTrimMode(false);
+            onToggleMeasure();
+            onSelect([]);
+          }}
+          aria-pressed={measureMode}
+          aria-label="거리 재기"
+          title="거리 재기: 두 점 사이의 실제 거리"
+        >
+          <IconRuler />
         </button>
       </div>
 

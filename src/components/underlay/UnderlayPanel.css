@@ -1,0 +1,75 @@
+.underlay-panel-size,
+.underlay-panel-hint,
+.underlay-panel-measured,
+.underlay-panel-error {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--sub);
+  word-break: keep-all;
+}
+
+.underlay-panel-size {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.underlay-panel-measured strong {
+  color: var(--primary);
+  font-size: 14px;
+}
+
+.underlay-panel-error.is-ok {
+  color: var(--primary);
+}
+
+.underlay-panel-error.is-warn {
+  color: var(--danger);
+}
+
+.underlay-panel-toggles {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.underlay-panel-toggles .btn,
+.underlay-panel-row .btn {
+  justify-content: center;
+  min-width: 0;
+  padding-left: 4px;
+  padding-right: 4px;
+}
+
+.underlay-panel-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.underlay-panel-add {
+  justify-content: center;
+  width: 100%;
+}
+
+.underlay-panel-remove:not(:disabled):hover {
+  border-color: var(--danger);
+  background: var(--danger);
+  color: #fff;
+}
+
+.underlay-panel-subtitle {
+  margin-top: var(--space-1);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--sub);
+}
+
+.underlay-panel input[type='range'] {
+  padding: 0;
+  border: none;
+  background: none;
+  accent-color: var(--primary);
+}

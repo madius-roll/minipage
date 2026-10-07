@@ -46,6 +46,7 @@ export function useDialogs(): {
           title={pending.title}
           message={pending.message}
           confirmLabel={pending.confirmLabel}
+          cancelLabel={pending.cancelLabel}
           danger={pending.danger}
           onConfirm={() => settle(true)}
           onCancel={() => settle(false)}

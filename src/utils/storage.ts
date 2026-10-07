@@ -1,4 +1,13 @@
-import type { Layer, LayerCategory, Point, Shape } from '../types/cad';
+import type { Layer, LayerCategory, Point, Shape, Underlay } from '../types/cad';
+import { blobToDataUrl, dataUrlToBlob } from './imageWarp';
+
+/** 바탕 도면에서 이미지 자체를 뺀 나머지(위치·축척·표시 설정) — 이미지는 용량이 커서 따로 보관한다 */
+export type UnderlayMeta = Omit<Underlay, 'imageUrl' | 'blob'>;
+
+/** 저장된 바탕 도면 — 파일로 내보낼 때만 이미지를 data URL로 함께 담는다 */
+export interface StoredUnderlay extends UnderlayMeta {
+  imageDataUrl?: string;
+}
 
 /** 브라우저에 자동 저장되고, 파일로 내보내고 불러오는 도면 한 장 */
 export interface DrawingFile {
@@ -6,7 +15,17 @@ export interface DrawingFile {
   name: string;
   layers: Layer[];
   shapes: Shape[];
+  underlay?: StoredUnderlay;
   savedAt: string;
+}
+
+export function toUnderlayMeta(underlay: Underlay): UnderlayMeta {
+  const { widthPx, heightPx, origin, mmPerPx, paperMmPerPx, opacity, invert, enhance, visible } = underlay;
+  return { widthPx, heightPx, origin, mmPerPx, paperMmPerPx, opacity, invert, enhance, visible };
+}
+
+export function reviveUnderlay(meta: UnderlayMeta, blob: Blob): Underlay {
+  return { ...toUnderlayMeta({ ...meta, imageUrl: '', blob }), imageUrl: URL.createObjectURL(blob), blob };
 }
 
 const STORAGE_KEY = 'minicad:drawing:v1';
@@ -57,6 +76,25 @@ function parseShape(raw: unknown, layerIds: Set<string>): Shape | null {
   return null;
 }
 
+function parseUnderlay(raw: unknown): StoredUnderlay | undefined {
+  if (!isRecord(raw)) return undefined;
+  const { widthPx, heightPx, origin, mmPerPx, paperMmPerPx, opacity, imageDataUrl } = raw;
+  if (!isNum(widthPx) || !isNum(heightPx) || widthPx <= 0 || heightPx <= 0) return undefined;
+  if (!isPoint(origin) || !isNum(mmPerPx) || mmPerPx <= 0) return undefined;
+  return {
+    widthPx,
+    heightPx,
+    origin,
+    mmPerPx,
+    paperMmPerPx: isNum(paperMmPerPx) && paperMmPerPx > 0 ? paperMmPerPx : undefined,
+    opacity: isNum(opacity) ? Math.min(1, Math.max(0.1, opacity)) : 0.7,
+    invert: raw.invert === true,
+    enhance: raw.enhance === true,
+    visible: raw.visible !== false,
+    imageDataUrl: typeof imageDataUrl === 'string' && imageDataUrl.startsWith('data:image/') ? imageDataUrl : undefined,
+  };
+}
+
 /** 저장소·파일에서 읽은 값을 검증해 도면으로 만든다. 형식이 맞지 않으면 null, 일부 도형만 깨졌으면 그 도형만 버린다 */
 export function parseDrawing(raw: unknown): DrawingFile | null {
   if (!isRecord(raw) || !Array.isArray(raw.layers) || !Array.isArray(raw.shapes)) return null;
@@ -69,6 +107,7 @@ export function parseDrawing(raw: unknown): DrawingFile | null {
     name: typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : DEFAULT_DRAWING_NAME,
     layers,
     shapes,
+    underlay: parseUnderlay(raw.underlay),
     savedAt: typeof raw.savedAt === 'string' ? raw.savedAt : new Date().toISOString(),
   };
 }
@@ -98,8 +137,12 @@ export function toFileBaseName(name: string): string {
   return name.replace(/[\\/:*?"<>|]/g, '_').trim() || DEFAULT_DRAWING_NAME;
 }
 
-export function downloadDrawingFile(drawing: Omit<DrawingFile, 'version' | 'savedAt'>): void {
-  const file: DrawingFile = { version: 1, ...drawing, savedAt: new Date().toISOString() };
+/** 도면을 파일 하나로 내려받는다 — 바탕 도면이 있으면 이미지까지 파일 안에 담아, 다른 기기에서 열어도 그대로 보이게 한다 */
+export async function downloadDrawingFile(drawing: { name: string; layers: Layer[]; shapes: Shape[]; underlay: Underlay | null }): Promise<void> {
+  const underlay: StoredUnderlay | undefined = drawing.underlay
+    ? { ...toUnderlayMeta(drawing.underlay), imageDataUrl: await blobToDataUrl(drawing.underlay.blob) }
+    : undefined;
+  const file: DrawingFile = { version: 1, name: drawing.name, layers: drawing.layers, shapes: drawing.shapes, underlay, savedAt: new Date().toISOString() };
   const blob = new Blob([JSON.stringify(file, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
@@ -109,9 +152,14 @@ export function downloadDrawingFile(drawing: Omit<DrawingFile, 'version' | 'save
   URL.revokeObjectURL(url);
 }
 
-export async function readDrawingFile(file: File): Promise<DrawingFile | null> {
+/** 도면 파일을 읽는다 — 파일에 바탕 도면 이미지가 들어 있으면 바로 쓸 수 있는 형태로 되살려 함께 돌려준다 */
+export async function readDrawingFile(file: File): Promise<{ drawing: DrawingFile; underlay: Underlay | null } | null> {
   try {
-    return parseDrawing(JSON.parse(await file.text()));
+    const drawing = parseDrawing(JSON.parse(await file.text()));
+    if (!drawing) return null;
+    const stored = drawing.underlay;
+    const underlay = stored?.imageDataUrl ? reviveUnderlay(stored, await dataUrlToBlob(stored.imageDataUrl)) : null;
+    return { drawing, underlay };
   } catch {
     return null;
   }

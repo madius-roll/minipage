@@ -6,6 +6,7 @@ export interface ConfirmOptions {
   title: string;
   message: string;
   confirmLabel?: string;
+  cancelLabel?: string;
   /** 삭제처럼 되돌리기 번거로운 동작이면 확인 버튼을 경고색으로 보여준다 */
   danger?: boolean;
 }
@@ -16,7 +17,7 @@ interface ConfirmDialogProps extends ConfirmOptions {
 }
 
 /** 브라우저 기본 confirm 창을 대신하는 확인 모달 — Enter로 확인, Esc·바깥 클릭으로 취소 */
-export default function ConfirmDialog({ title, message, confirmLabel = '확인', danger = false, onConfirm, onCancel }: ConfirmDialogProps) {
+export default function ConfirmDialog({ title, message, confirmLabel = '확인', cancelLabel = '취소', danger = false, onConfirm, onCancel }: ConfirmDialogProps) {
   const confirmRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
@@ -36,7 +37,7 @@ export default function ConfirmDialog({ title, message, confirmLabel = '확인',
         <h2 id="confirm-title" className="confirm-title">{title}</h2>
         <p id="confirm-message" className="confirm-message">{message}</p>
         <div className="confirm-actions">
-          <Button size="sm" variant="ghost" onClick={onCancel}>취소</Button>
+          <Button size="sm" variant="ghost" onClick={onCancel}>{cancelLabel}</Button>
           <Button ref={confirmRef} size="sm" className={danger ? 'confirm-danger' : ''} onClick={onConfirm}>{confirmLabel}</Button>
         </div>
       </div>

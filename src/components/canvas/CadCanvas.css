@@ -128,17 +128,19 @@
     padding: 5px;
   }
   .cad-zoom-btn {
-    width: 32px;
-    height: 32px;
+    width: 30px;
+    height: 30px;
   }
 
   /* 좁은 화면에서는 배율 숫자를 빼서 양쪽 버튼 묶음이 서로 겹치지 않게 한다 */
   .cad-zoom-level {
     display: none;
   }
+  /* 왼쪽 묶음이 버튼 다섯 개라, 360px 폭에서도 오른쪽 묶음과 닿지 않게 간격을 줄인다 */
   .cad-zoom-controls,
   .cad-quick-actions {
-    gap: 6px;
+    gap: 4px;
+    padding: 4px;
   }
 
   /* 모바일 전용: 속성 패널이 없어진 대신, 선택된 도형을 바로 지울 수 있는 작은 버튼 */
@@ -250,6 +252,22 @@
 
 .cad-snap-marker circle {
   fill: none;
+}
+
+.cad-measure line {
+  stroke: #FFD166;
+  stroke-width: calc(var(--u) * 1.5px);
+}
+
+.cad-measure text {
+  fill: #FFD166;
+  font-size: calc(var(--u) * 13px);
+  font-family: var(--font-family);
+  font-weight: 600;
+  paint-order: stroke;
+  stroke: var(--bg);
+  stroke-width: calc(var(--u) * 3px);
+  stroke-linejoin: round;
 }
 
 .cad-marquee {

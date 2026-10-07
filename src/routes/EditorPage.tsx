@@ -9,11 +9,13 @@ import CadCanvas, { type CadCanvasHandle } from '../components/canvas/CadCanvas'
 import LawGuideModal from '../components/guide/LawGuideModal';
 import MobileSheetHandle from '../components/layout/MobileSheetHandle';
 import MobileLayerStrip from '../components/layout/MobileLayerStrip';
+import UnderlayPanel from '../components/underlay/UnderlayPanel';
+import UnderlayWizard from '../components/underlay/UnderlayWizard';
 import { dummyLayers } from '../data/dummyDrawing';
 import { ALL_LAYERS_ID, LAYER_COLOR_PALETTE, MAX_LAYERS } from '../data/layerMeta';
 import { useDialogs } from '../hooks/useDialogs';
 import { useDrawing } from '../hooks/useDrawing';
-import type { ArcShape, Layer, LayerCategory, LineShape, Point, Shape } from '../types/cad';
+import type { ArcShape, Layer, LayerCategory, LineShape, Point, Shape, Underlay } from '../types/cad';
 import { distanceMm, genId, lengthAndAngleBetween, pointFromPolar, translateShape } from '../utils/geometry';
 import { exportDrawingAsPdf } from '../utils/exportPdf';
 import { COLUMN_LABEL_PREFIX, nextNumberedLabel, numberedLabelPrefix, SPRINKLER_LABEL_PREFIX } from '../utils/labels';
@@ -42,7 +44,7 @@ function isEditableTarget(target: EventTarget | null): boolean {
 
 export default function EditorPage() {
   const drawing = useDrawing();
-  const { name, layers, setLayers, shapes, setShapes, pendingPoint, setPendingPoint, pushHistory } = drawing;
+  const { name, layers, setLayers, shapes, setShapes, pendingPoint, setPendingPoint, pushHistory, underlay } = drawing;
   const dialogs = useDialogs();
   const [drawMode, setDrawMode] = useState<DrawMode>('select');
   const [drawForm, setDrawForm] = useState<DrawFormState>(DEFAULT_DRAW_FORM);
@@ -61,6 +63,10 @@ export default function EditorPage() {
   const [clipboard, setClipboard] = useState<Shape[]>([]);
   const [mobileSheetOpen, setMobileSheetOpen] = useState(false);
   const [showUncovered, setShowUncovered] = useState(true);
+  const [underlayWizardOpen, setUnderlayWizardOpen] = useState(false);
+  /** 거리 재기 — 켜져 있는 동안 캔버스 클릭이 두 점(A, B) 찍기로 동작한다 */
+  const [measureMode, setMeasureMode] = useState(false);
+  const [measure, setMeasure] = useState<{ a: Point; b: Point | null } | null>(null);
   /** 도면을 통째로 갈아 끼울 때마다 올려서 캔버스를 새로 띄운다 (화면 맞춤·줌이 새 도면 기준으로 다시 잡힌다) */
   const [canvasKey, setCanvasKey] = useState(0);
   const canvasRef = useRef<CadCanvasHandle>(null);
@@ -221,6 +227,31 @@ export default function EditorPage() {
     setSelectedIds([id]);
   };
 
+  /** 시작점(pendingPoint)을 왼쪽 위 첫 헤드로 삼아, 오른쪽·아래쪽으로 간격을 두고 헤드를 한꺼번에 놓는다 */
+  const handleAddSprinklerArray = (radiusMm: number, cols: number, rows: number, gapXMm: number, gapYMm: number) => {
+    pushHistory();
+    const numbered: Shape[] = [...shapes];
+    const added: Shape[] = [];
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const head: Shape = {
+          id: genId('circle'),
+          layer: activeLayerId,
+          kind: 'circle',
+          center: { x: pendingPoint.x + c * gapXMm, y: pendingPoint.y + r * gapYMm },
+          radiusMm,
+          sprinklerHead: true,
+          label: nextNumberedLabel(numbered, SPRINKLER_LABEL_PREFIX),
+        };
+        numbered.push(head);
+        added.push(head);
+      }
+    }
+    setShapes((prev) => [...prev, ...added]);
+    setSelectedIds(added.map((s) => s.id));
+    dialogs.notify(`헤드 ${added.length}개를 놓았어요.`);
+  };
+
   /** 캔버스 클릭으로 시작점/중심점을 정할 때 호출 — 무장 상태라면 다음 클릭은 끝점을 찍는 차례로 넘어간다 */
   const handleCanvasClick = (point: Point) => {
     setPendingPoint(point);
@@ -275,13 +306,13 @@ export default function EditorPage() {
 
   const handleExportPdf = async () => {
     if (exportingPdf) return;
-    if (shapes.length === 0) {
+    if (shapes.length === 0 && !underlay) {
       dialogs.notify('저장할 도형이 없어요. 먼저 도면을 그려 주세요.');
       return;
     }
     setExportingPdf(true);
     try {
-      await exportDrawingAsPdf({ name, shapes, layers, review, showUncovered });
+      await exportDrawingAsPdf({ name, shapes, layers, review, showUncovered, underlay });
     } catch (err) {
       dialogs.notify('PDF 저장에 실패했어요. 다시 시도해 주세요.');
       console.error(err);
@@ -454,12 +485,12 @@ export default function EditorPage() {
     });
     if (!ok) return;
     const nextLayers = dummyLayers.map((l) => ({ ...l, visible: true }));
-    drawing.replaceDrawing({ name: DEFAULT_DRAWING_NAME, layers: nextLayers, shapes: [] });
+    drawing.replaceDrawing({ name: DEFAULT_DRAWING_NAME, layers: nextLayers, shapes: [], underlay: null });
     resetEditorForNewDrawing(nextLayers);
   };
 
   const handleSaveFile = () => {
-    downloadDrawingFile({ name, layers, shapes });
+    void downloadDrawingFile({ name, layers, shapes, underlay }).catch(() => dialogs.notify('파일로 저장하지 못했어요. 다시 시도해 주세요.'));
   };
 
   const handleLoadFile = async (file: File) => {
@@ -468,15 +499,85 @@ export default function EditorPage() {
       dialogs.notify('도면 파일을 읽지 못했어요. 이 앱에서 저장한 파일인지 확인해 주세요.');
       return;
     }
-    drawing.replaceDrawing(loaded);
-    resetEditorForNewDrawing(loaded.layers);
-    dialogs.notify(`"${loaded.name}" 도면을 불러왔어요.`);
+    const { drawing: opened } = loaded;
+    drawing.replaceDrawing({ name: opened.name, layers: opened.layers, shapes: opened.shapes, underlay: loaded.underlay });
+    resetEditorForNewDrawing(opened.layers);
+    dialogs.notify(`"${opened.name}" 도면을 불러왔어요.`);
+  };
+
+  /** 바탕 도면 깔기를 마쳤을 때 — 이미 그려 둔 도형이 있으면 비우고 시작할지 묻는다 (샘플 도면 위에 사진이 겹치면 헷갈린다) */
+  const handleUnderlayComplete = async (next: Underlay) => {
+    setUnderlayWizardOpen(false);
+    const clearShapes = shapes.length > 0 && !underlay && await dialogs.confirm({
+      title: '기존 도형 정리',
+      message: `지금 캔버스에 도형 ${shapes.length}개가 있어요. 비우고 바탕 도면 위에서 새로 시작할까요? 그대로 두면 도형과 바탕 도면이 겹쳐 보여요.`,
+      confirmLabel: '도형 비우기',
+      cancelLabel: '그대로 두기',
+    });
+    drawing.changeUnderlay(next);
+    if (clearShapes) setShapes([]);
+    setSelectedIds([]);
+    setMeasure(null);
+    setMobileSheetOpen(false);
+    setCanvasKey((k) => k + 1);
+    dialogs.notify('바탕 도면을 깔았어요. 이제 그 위에 그리면 돼요.');
+  };
+
+  const handleRemoveUnderlay = async () => {
+    const ok = await dialogs.confirm({
+      title: '바탕 도면 지우기',
+      message: '깔아 둔 바탕 도면을 지울까요? 그 위에 그린 도형은 그대로 남고, 실행 취소로 되돌릴 수 있어요.',
+      confirmLabel: '지우기',
+      danger: true,
+    });
+    if (ok) drawing.changeUnderlay(null);
+  };
+
+  const handleSetUnderlayRatio = (ratio: number) => {
+    if (!underlay?.paperMmPerPx) return;
+    drawing.changeUnderlay({ ...underlay, mmPerPx: underlay.paperMmPerPx * ratio });
+  };
+
+  const handleMeasurePoint = (point: Point) => {
+    setMeasure((prev) => (!prev || prev.b ? { a: point, b: null } : { a: prev.a, b: point }));
+  };
+
+  const handleToggleMeasure = () => {
+    setMeasureMode((prev) => !prev);
+    setDrawPhase('start');
+  };
+
+  /**
+   * 방금 잰 A–B가 실제로는 expectedMm라고 알려 주면 바탕 도면의 축척을 거기에 맞춘다.
+   * A점을 기준으로 늘리거나 줄여서, A 주변에 이미 그려 둔 것들과의 위치 관계가 최대한 유지되게 한다.
+   */
+  const handleRescaleToMeasure = (expectedMm: number) => {
+    if (!underlay || !measure?.b || !(expectedMm > 0)) return;
+    const measured = distanceMm(measure.a, measure.b);
+    if (measured <= 0) return;
+    const k = expectedMm / measured;
+    const { a, b } = measure;
+    drawing.changeUnderlay({
+      ...underlay,
+      mmPerPx: underlay.mmPerPx * k,
+      origin: { x: a.x + (underlay.origin.x - a.x) * k, y: a.y + (underlay.origin.y - a.y) * k },
+      // 종이 크기 기준 축척과는 이제 맞지 않으므로 1:N 입력은 더 쓰지 않는다
+      paperMmPerPx: undefined,
+    });
+    setMeasure({ a, b: { x: Math.round(a.x + (b.x - a.x) * k), y: Math.round(a.y + (b.y - a.y) * k) } });
+    dialogs.notify('잰 치수에 맞춰 바탕 도면의 축척을 고쳤어요.');
   };
 
   // 키보드 단축키 (입력창 포커스 중이거나 모달이 떠 있으면 무시)
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (isEditableTarget(e.target) || guideOpen || dialogs.isConfirmOpen) return;
+      if (isEditableTarget(e.target) || guideOpen || dialogs.isConfirmOpen || underlayWizardOpen) return;
+
+      if (e.key === 'Escape' && measureMode) {
+        e.preventDefault();
+        setMeasureMode(false);
+        return;
+      }
 
       if (e.key === 'Escape' && armed) {
         e.preventDefault();
@@ -545,6 +646,7 @@ export default function EditorPage() {
             onNewDrawing={handleNewDrawing}
             onSaveFile={handleSaveFile}
             onLoadFile={handleLoadFile}
+            onOpenUnderlay={() => setUnderlayWizardOpen(true)}
             saveFailed={drawing.saveFailed}
           />
         )}
@@ -576,6 +678,7 @@ export default function EditorPage() {
             onAddCircle={handleAddCircle}
             onAddRect={handleAddRect}
             onAddSprinklerHead={handleAddSprinklerHead}
+            onAddSprinklerArray={handleAddSprinklerArray}
             onAddText={handleAddText}
             onResetPending={handleResetPending}
             onUndo={handleUndo}
@@ -600,6 +703,17 @@ export default function EditorPage() {
             onToggleMergeSelect={toggleMergeSelect}
             onConfirmMerge={confirmMerge}
           />
+          <UnderlayPanel
+            underlay={underlay}
+            onOpenWizard={() => setUnderlayWizardOpen(true)}
+            onAdjust={drawing.adjustUnderlay}
+            onSetRatio={handleSetUnderlayRatio}
+            onRemove={handleRemoveUnderlay}
+            measureMode={measureMode}
+            onToggleMeasure={() => { handleToggleMeasure(); setMobileSheetOpen(false); }}
+            measure={measure}
+            onRescaleToMeasure={handleRescaleToMeasure}
+          />
           <ReviewPanel
             review={review}
             showUncovered={showUncovered}
@@ -610,7 +724,8 @@ export default function EditorPage() {
 
         <main className="editor-canvas-area">
           <CadCanvas
-            key={canvasKey}
+            // 바탕 도면이 생기거나 사라질 때도 새로 띄운다 — 저장해 둔 사진은 시작 직후 뒤늦게 불러와지므로, 그때 화면 맞춤을 다시 잡아야 한다
+            key={`${canvasKey}-${underlay ? 'underlay' : 'plain'}`}
             ref={canvasRef}
             shapes={shapes}
             layers={layers}
@@ -635,6 +750,11 @@ export default function EditorPage() {
             drawPreviewKind={drawPreviewKind}
             orthoLock={orthoLock}
             uncoveredRects={showUncovered ? review.uncoveredRects : []}
+            underlay={underlay}
+            measureMode={measureMode}
+            onToggleMeasure={handleToggleMeasure}
+            measure={measure}
+            onMeasurePoint={handleMeasurePoint}
           />
         </main>
       </div>
@@ -677,6 +797,7 @@ export default function EditorPage() {
       />
 
       {guideOpen && <LawGuideModal onClose={() => setGuideOpen(false)} />}
+      {underlayWizardOpen && <UnderlayWizard onComplete={handleUnderlayComplete} onClose={() => setUnderlayWizardOpen(false)} />}
       {dialogs.element}
     </div>
   );

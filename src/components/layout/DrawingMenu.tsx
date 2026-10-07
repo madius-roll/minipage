@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import Button from '../ui/Button';
-import { IconDownload, IconFile, IconFolderOpen, IconPlus } from '../ui/Icon';
+import { IconCamera, IconDownload, IconFile, IconFolderOpen, IconPlus } from '../ui/Icon';
 import { DRAWING_FILE_EXTENSION } from '../../utils/storage';
 import './DrawingMenu.css';
 
@@ -10,12 +10,14 @@ interface DrawingMenuProps {
   onNewDrawing: () => void;
   onSaveFile: () => void;
   onLoadFile: (file: File) => void;
+  /** 사진·PDF를 바탕 도면으로 까는 화면 열기 */
+  onOpenUnderlay: () => void;
   /** 브라우저 자동 저장이 실패한 상태 (저장 공간 부족 등) */
   saveFailed: boolean;
 }
 
-/** 헤더의 도면 메뉴 — 도면 이름, 새 도면, 파일로 저장/불러오기 */
-export default function DrawingMenu({ name, onRename, onNewDrawing, onSaveFile, onLoadFile, saveFailed }: DrawingMenuProps) {
+/** 헤더의 도면 메뉴 — 도면 이름, 바탕 도면 깔기, 새 도면, 파일로 저장/불러오기 */
+export default function DrawingMenu({ name, onRename, onNewDrawing, onSaveFile, onLoadFile, onOpenUnderlay, saveFailed }: DrawingMenuProps) {
   const [open, setOpen] = useState(false);
   const [draftName, setDraftName] = useState(name);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -85,6 +87,9 @@ export default function DrawingMenu({ name, onRename, onNewDrawing, onSaveFile, 
           </div>
 
           <div className="drawing-menu-items">
+            <button type="button" className="drawing-menu-item" onClick={() => run(onOpenUnderlay)}>
+              <IconCamera /> 도면 사진·PDF 깔기
+            </button>
             <button type="button" className="drawing-menu-item" onClick={() => run(onNewDrawing)}>
               <IconPlus /> 새 도면
             </button>

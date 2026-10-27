@@ -21,7 +21,8 @@ export function distanceMm(a: Point, b: Point): number {
 export function lengthAndAngleBetween(a: Point, b: Point): { lengthMm: number; angleDeg: number } {
   const lengthMm = Math.round(distanceMm(a, b));
   const angleDeg = Math.round((Math.atan2(-(b.y - a.y), b.x - a.x) * 180) / Math.PI * 100) / 100;
-  return { lengthMm, angleDeg };
+  // 정확히 왼쪽을 향하는 선은 atan2가 -180°를 내기도 하므로 180°로 통일한다 (-0°도 0°로)
+  return { lengthMm, angleDeg: angleDeg === -180 ? 180 : angleDeg + 0 };
 }
 
 /** a와 b 사이를 t(0~1) 비율로 보간한 점 */

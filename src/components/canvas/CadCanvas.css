@@ -296,3 +296,116 @@
   z-index: 5;
   pointer-events: none;
 }
+
+/* 캔버스 위쪽에 뜨는 작은 조작 막대 — 연속 벽 닫기/끝, 치수 입력 */
+.cad-float-bar {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: calc(100% - 24px);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 5px 6px 5px 12px;
+  background: var(--surface);
+  border: 1.5px solid var(--primary);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: var(--font-family);
+  font-size: 12px;
+  font-weight: 500;
+  z-index: 6;
+}
+
+.cad-float-bar-text {
+  white-space: nowrap;
+}
+
+.cad-float-btn {
+  flex-shrink: 0;
+  height: 30px;
+  min-width: 44px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  border: 1.5px solid var(--primary);
+  background: rgba(29, 185, 84, 0.12);
+  color: var(--primary);
+  font-family: var(--font-family);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.cad-float-btn-ghost {
+  border-color: var(--border);
+  background: transparent;
+  color: var(--sub);
+}
+
+.cad-float-icon-btn {
+  min-width: 30px;
+  width: 30px;
+  padding: 0;
+}
+
+.cad-float-icon-btn .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.cad-dim-field {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  color: var(--sub);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.cad-dim-field input {
+  width: 76px;
+  min-width: 0;
+  padding: 6px 8px;
+  font-size: 14px;
+}
+
+.cad-dim-unit {
+  color: var(--sub);
+  font-size: 11px;
+}
+
+@media (max-width: 860px) {
+  /* 오른쪽 위 삭제 버튼을 피해 왼쪽부터 채운다 */
+  .cad-float-bar {
+    left: 12px;
+    right: 60px;
+    transform: none;
+    max-width: none;
+    width: fit-content;
+  }
+
+  .cad-dim-editor {
+    width: auto;
+  }
+
+  .cad-dim-field {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .cad-dim-field input {
+    width: 100%;
+    /* 16px 미만이면 iOS가 입력할 때 화면을 확대해 버린다 */
+    font-size: 16px;
+  }
+
+  .cad-dim-unit {
+    display: none;
+  }
+}

@@ -1,17 +1,18 @@
 import type { FormEvent, ReactNode } from 'react';
 import Button from '../ui/Button';
-import { IconCursor, IconLine, IconOrtho, IconPencil, IconShapes, IconSprinklerRadius, IconText } from '../ui/Icon';
+import { IconArrow, IconCursor, IconLine, IconOrtho, IconPencil, IconRoom, IconShapes, IconSprinklerRadius, IconText } from '../ui/Icon';
 import type { Layer, LayerCategory, Point } from '../../types/cad';
 import { ALL_LAYERS_ID, DEFAULT_BEAM_THICKNESS_MM } from '../../data/layerMeta';
 import './panels.css';
 import './ToolPanel.css';
 
-export type DrawMode = 'select' | 'line' | 'circle' | 'sprinklerHead' | 'text';
+export type DrawMode = 'select' | 'line' | 'room' | 'circle' | 'sprinklerHead' | 'text';
 export type ColumnShape = 'circle' | 'rect';
 
 const DRAW_MODE_LABEL: Record<DrawMode, string> = {
   select: '선택',
   line: '선 그리기',
+  room: '방 그리기',
   circle: '도형 그리기',
   sprinklerHead: 'SP헤드반경',
   text: '텍스트',
@@ -20,6 +21,7 @@ const DRAW_MODE_LABEL: Record<DrawMode, string> = {
 const DRAW_MODE_ICON: Record<DrawMode, ReactNode> = {
   select: <IconCursor />,
   line: <IconLine />,
+  room: <IconRoom />,
   circle: <IconShapes />,
   sprinklerHead: <IconSprinklerRadius />,
   text: <IconText />,
@@ -29,7 +31,7 @@ const DRAW_MODE_ICON: Record<DrawMode, ReactNode> = {
 export function getAllowedDrawModes(category?: LayerCategory): DrawMode[] {
   switch (category) {
     case 'wall':
-      return ['select', 'line', 'circle', 'text'];
+      return ['select', 'line', 'room', 'circle', 'text'];
     case 'beam':
       return ['select', 'line', 'text'];
     case 'column':
@@ -37,7 +39,7 @@ export function getAllowedDrawModes(category?: LayerCategory): DrawMode[] {
     case 'sprinkler':
       return ['select', 'sprinklerHead', 'text'];
     default:
-      return ['select', 'line', 'circle', 'sprinklerHead', 'text'];
+      return ['select', 'line', 'room', 'circle', 'sprinklerHead', 'text'];
   }
 }
 
@@ -46,10 +48,18 @@ export function isMouseDrawMode(mode: DrawMode): boolean {
   return mode !== 'select' && mode !== 'text';
 }
 
-/** 도형 그리기에서 원/사각형을 함께 고를 수 있는 레이어 — 벽체(방 형태), 기둥(사각 기둥) */
+/** 도형 그리기에서 원/사각형을 함께 고를 수 있는 레이어 — 기둥(사각 기둥). 벽체의 사각형은 "방 그리기"로 따로 그린다 */
 export function supportsRectShape(category?: LayerCategory): boolean {
-  return category === 'wall' || category === 'column';
+  return category === 'column';
 }
+
+/** 연속 벽을 길이+방향으로 이어 그릴 때 쓰는 네 방향 (각도는 0°=오른쪽, 반시계 증가) */
+export const LINE_DIRECTIONS: { angleDeg: number; label: string }[] = [
+  { angleDeg: 180, label: '왼쪽' },
+  { angleDeg: 90, label: '위' },
+  { angleDeg: 270, label: '아래' },
+  { angleDeg: 0, label: '오른쪽' },
+];
 
 /** 선/도형/텍스트 입력값 — 하단 시트 접힌 상태의 미니 입력창과 값을 공유하기 위해 EditorPage에서 관리한다 */
 export interface DrawFormState {
@@ -59,6 +69,9 @@ export interface DrawFormState {
   radiusMm: string;
   widthMm: string;
   heightMm: string;
+  /** 방 그리기의 가로·세로 — 기둥 크기(widthMm/heightMm)와 기본값이 달라 따로 둔다 */
+  roomWidthMm: string;
+  roomHeightMm: string;
   columnShape: ColumnShape;
   textValue: string;
   /** SP헤드 배열 배치 — 켜면 시작점부터 가로·세로 간격으로 여러 개를 한 번에 놓는다 */
@@ -76,6 +89,8 @@ export const DEFAULT_DRAW_FORM: DrawFormState = {
   radiusMm: '',
   widthMm: '400',
   heightMm: '400',
+  roomWidthMm: '',
+  roomHeightMm: '',
   columnShape: 'circle',
   textValue: '',
   arrayOn: false,
@@ -149,14 +164,14 @@ export default function ToolPanel({
   onClearAll,
   canClearAll,
 }: ToolPanelProps) {
-  const { lengthMm, angleDeg, thicknessMm, radiusMm, widthMm, heightMm, columnShape, textValue, arrayOn, arrayCols, arrayRows, arrayGapX, arrayGapY } = drawForm;
+  const { lengthMm, angleDeg, thicknessMm, radiusMm, widthMm, heightMm, roomWidthMm, roomHeightMm, columnShape, textValue, arrayOn, arrayCols, arrayRows, arrayGapX, arrayGapY } = drawForm;
 
   const isAllLayers = activeLayerId === ALL_LAYERS_ID;
   const activeLayer = layers.find((l) => l.id === activeLayerId);
   const isBeam = activeLayer?.category === 'beam';
   const canPickRectShape = supportsRectShape(activeLayer?.category);
   const allowedModes = getAllowedDrawModes(activeLayer?.category);
-  const isRectMode = mode === 'circle' && canPickRectShape && columnShape === 'rect';
+  const isRectMode = mode === 'room' || (mode === 'circle' && canPickRectShape && columnShape === 'rect');
 
   const length = parseFloat(lengthMm);
   const angle = parseFloat(angleDeg);
@@ -168,6 +183,10 @@ export default function ToolPanel({
   const lineValid = Number.isFinite(length) && length !== 0 && Number.isFinite(angle) && (!isBeam || (Number.isFinite(thickness) && thickness > 0));
   const circleValid = Number.isFinite(radius) && radius > 0;
   const rectValid = Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0;
+  const roomWidth = parseFloat(roomWidthMm);
+  const roomHeight = parseFloat(roomHeightMm);
+  const roomValid = Number.isFinite(roomWidth) && roomWidth > 0 && Number.isFinite(roomHeight) && roomHeight > 0;
+  const lengthValid = Number.isFinite(length) && length !== 0 && (!isBeam || (Number.isFinite(thickness) && thickness > 0));
   const textValid = textValue.trim().length > 0;
   const cols = parseInt(arrayCols, 10);
   const rows = parseInt(arrayRows, 10);
@@ -180,7 +199,24 @@ export default function ToolPanel({
     e.preventDefault();
     if (!lineValid) return;
     onAddLine(length, angle, isBeam ? thickness : undefined);
-    onDrawFormChange({ lengthMm: '', angleDeg: '' });
+    // 방향은 남겨 두어, 같은 방향으로 이어 그릴 때 길이만 넣고 Enter를 누르면 되게 한다
+    onDrawFormChange({ lengthMm: '' });
+  };
+
+  /** 방향 버튼 — 길이가 들어 있으면 그 방향으로 바로 벽을 잇고, 비어 있으면 방향만 골라 둔다 */
+  const handleDirection = (dirDeg: number) => {
+    if (!lengthValid) {
+      onDrawFormChange({ angleDeg: String(dirDeg) });
+      return;
+    }
+    onAddLine(length, dirDeg, isBeam ? thickness : undefined);
+    onDrawFormChange({ lengthMm: '', angleDeg: String(dirDeg) });
+  };
+
+  const handleSubmitRoom = (e: FormEvent) => {
+    e.preventDefault();
+    if (!roomValid) return;
+    onAddRect(roomWidth, roomHeight);
   };
 
   const handleSubmitText = (e: FormEvent) => {
@@ -214,6 +250,8 @@ export default function ToolPanel({
     onAddSprinklerHead(radius);
     onDrawFormChange({ radiusMm: '' });
   };
+
+  const pointLabel = mode === 'line' ? '시작점' : mode === 'text' ? '텍스트 위치' : mode === 'room' ? '첫 모서리' : isRectMode ? '좌상단 시작점' : '중심점';
 
   return (
     <section className="panel tool-panel">
@@ -257,12 +295,12 @@ export default function ToolPanel({
       ) : (
         <>
       <p className="tool-pending-point">
-        {mode === 'line' ? '시작점' : mode === 'text' ? '텍스트 위치' : isRectMode ? '좌상단 시작점' : '중심점'}: ({pendingPoint.x}, {pendingPoint.y}) mm
+        {pointLabel}: ({pendingPoint.x}, {pendingPoint.y}) mm
         <button type="button" className="tool-pending-reset" onClick={onResetPending}>
           원점으로
         </button>
       </p>
-      <p className="tool-hint">캔버스를 클릭해 {mode === 'line' ? '시작점' : mode === 'text' ? '텍스트 위치' : isRectMode ? '좌상단 시작점' : '중심점'}을 바꿀 수 있어요.</p>
+      <p className="tool-hint">캔버스를 클릭해 {pointLabel}을 바꿀 수 있어요.</p>
 
       {mode !== 'text' && (
         <>
@@ -274,7 +312,7 @@ export default function ToolPanel({
               icon={<IconPencil />}
               onClick={onToggleDrawArmed}
               className="tool-draw-toggle"
-              title="켜면 캔버스를 두 번 클릭(탭)해서 바로 그려요. 끄면 클릭은 시작점만 옮기고, 아래 수치를 입력해 그려요."
+              title="켜면 캔버스를 끌거나 두 번 클릭(탭)해서 바로 그려요. 끄면 클릭은 시작점만 옮기고, 아래 수치를 입력해 그려요."
             >
               클릭 그리기 {drawArmed ? 'ON' : 'OFF'}
             </Button>
@@ -292,9 +330,15 @@ export default function ToolPanel({
           </div>
           {drawArmed && (
             <p className="tool-hint">
-              {drawPhase === 'start'
-                ? `캔버스를 클릭해 ${mode === 'line' ? '시작점' : isRectMode ? '좌상단 시작점' : '중심점'}을 찍으세요.`
-                : `캔버스에서 ${mode === 'line' ? '끝점' : isRectMode ? '반대쪽 꼭짓점' : '반지름 지점'}을 클릭하면 바로 그려져요. (Esc: 취소)`}
+              {mode === 'room'
+                ? drawPhase === 'start'
+                  ? '캔버스에서 대각선으로 끌면 방이 그려지고, 바로 가로·세로를 입력할 수 있어요.'
+                  : '반대쪽 모서리를 찍으면 방이 그려져요. (Esc: 취소)'
+                : drawPhase === 'start'
+                  ? `캔버스를 클릭해 ${pointLabel}을 찍거나, 끌어서 바로 그리세요.`
+                  : mode === 'line'
+                    ? '다음 점을 계속 찍으면 벽이 이어져요. 시작점을 찍으면 닫혀요. (Esc: 끝내기)'
+                    : `캔버스에서 ${isRectMode ? '반대쪽 꼭짓점' : '반지름 지점'}을 클릭하면 바로 그려져요. (Esc: 취소)`}
             </p>
           )}
         </>
@@ -318,6 +362,25 @@ export default function ToolPanel({
             <label htmlFor="angle">각도 (°)</label>
             <input id="angle" type="number" placeholder="예: 90" value={angleDeg} onChange={(e) => onDrawFormChange({ angleDeg: e.target.value })} />
           </div>
+          <div className="field">
+            <span className="tool-field-label">방향으로 바로 잇기</span>
+            <div className="tool-direction-row" role="group" aria-label="방향">
+              {LINE_DIRECTIONS.map((d) => (
+                <Button
+                  key={d.angleDeg}
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  active={angle === d.angleDeg}
+                  icon={<IconArrow angleDeg={d.angleDeg} />}
+                  onClick={() => handleDirection(d.angleDeg)}
+                  aria-label={d.label}
+                  title={`${d.label}으로 ${lengthValid ? `${length}mm 잇기` : '방향 고르기'}`}
+                  className="tool-direction-btn"
+                />
+              ))}
+            </div>
+          </div>
           {isBeam && (
             <div className="field">
               <label htmlFor="thickness">두께 (mm)</label>
@@ -325,6 +388,18 @@ export default function ToolPanel({
             </div>
           )}
           <Button type="submit" size="sm" disabled={!lineValid} className="tool-submit">선 추가</Button>
+        </form>
+      ) : mode === 'room' ? (
+        <form className="tool-form" onSubmit={handleSubmitRoom}>
+          <div className="field">
+            <label htmlFor="room-width">가로 (mm)</label>
+            <input id="room-width" type="number" inputMode="decimal" min="1" placeholder="예: 5000" value={roomWidthMm} onChange={(e) => onDrawFormChange({ roomWidthMm: e.target.value })} />
+          </div>
+          <div className="field">
+            <label htmlFor="room-height">세로 (mm)</label>
+            <input id="room-height" type="number" inputMode="decimal" min="1" placeholder="예: 3000" value={roomHeightMm} onChange={(e) => onDrawFormChange({ roomHeightMm: e.target.value })} />
+          </div>
+          <Button type="submit" size="sm" disabled={!roomValid} className="tool-submit">방 추가</Button>
         </form>
       ) : mode === 'sprinklerHead' ? (
         <form className="tool-form" onSubmit={handleSubmitSprinklerHead}>

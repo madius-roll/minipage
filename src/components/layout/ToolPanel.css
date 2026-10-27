@@ -13,6 +13,12 @@
   gap: 6px;
 }
 
+/* 도구가 다섯 개 이상이면(벽체: 방 그리기 포함) 한 줄에 우겨넣지 않고 두 줄로 나눈다 */
+.tool-mode-switch-draw:has(> .btn:nth-child(5)) {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+}
+
 .tool-mode-switch-draw .btn {
   flex-direction: column;
   gap: 4px;
@@ -136,4 +142,29 @@
   .tool-active-layer-field {
     display: none;
   }
+}
+
+/* label 요소가 아닌 묶음 제목 — 전역 label과 같은 모양 */
+.tool-field-label {
+  font-size: 12px;
+  color: var(--sub);
+  font-weight: 500;
+}
+
+/* 연속 벽: 길이를 넣고 방향을 누르면 그 방향으로 벽이 바로 이어진다 */
+.tool-direction-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+
+.tool-direction-btn {
+  justify-content: center;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.tool-direction-btn .icon {
+  width: 17px;
+  height: 17px;
 }

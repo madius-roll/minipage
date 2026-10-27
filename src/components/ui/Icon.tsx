@@ -359,3 +359,26 @@ export function IconRotate({ className = '' }: IconProps) {
     </svg>
   );
 }
+
+/** 방(사각형 벽) — 네 모서리를 점으로 강조해 기둥용 사각형과 구분한다 */
+export function IconRoom({ className = '' }: IconProps) {
+  return (
+    <svg className={`${base} ${className}`} viewBox="0 0 24 24">
+      <rect x="4" y="5" width="16" height="14" rx="1" />
+      <circle cx="4" cy="5" r="1.4" fill="currentColor" stroke="none" />
+      <circle cx="20" cy="19" r="1.4" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+/** 방향 화살표 — 오른쪽을 기준으로 그리고, angle(0°=오른쪽, 반시계 증가)만큼 돌린다 */
+export function IconArrow({ className = '', angleDeg = 0 }: IconProps & { angleDeg?: number }) {
+  return (
+    <svg className={`${base} ${className}`} viewBox="0 0 24 24">
+      <g transform={`rotate(${-angleDeg} 12 12)`}>
+        <line x1="5" y1="12" x2="19" y2="12" />
+        <polyline points="13,6 19,12 13,18" />
+      </g>
+    </svg>
+  );
+}

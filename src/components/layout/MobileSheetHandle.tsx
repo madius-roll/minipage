@@ -1,12 +1,13 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import type { LayerCategory, Shape } from '../../types/cad';
-import { getAllowedDrawModes, type DrawFormState, type DrawMode } from './ToolPanel';
-import { IconChevronUp, IconCursor, IconLine, IconPlus, IconShapes, IconSprinklerRadius, IconText } from '../ui/Icon';
+import { getAllowedDrawModes, LINE_DIRECTIONS, type DrawFormState, type DrawMode } from './ToolPanel';
+import { IconArrow, IconChevronUp, IconCursor, IconLine, IconPlus, IconRoom, IconShapes, IconSprinklerRadius, IconText } from '../ui/Icon';
 import './MobileSheetHandle.css';
 
 const MODE_ICON: Record<DrawMode, ReactNode> = {
   select: <IconCursor />,
   line: <IconLine />,
+  room: <IconRoom />,
   circle: <IconShapes />,
   sprinklerHead: <IconSprinklerRadius />,
   text: <IconText />,
@@ -15,6 +16,7 @@ const MODE_ICON: Record<DrawMode, ReactNode> = {
 const MODE_LABEL: Record<DrawMode, string> = {
   select: '선택',
   line: '선 그리기',
+  room: '방 그리기',
   circle: '도형 그리기',
   sprinklerHead: 'SP헤드반경',
   text: '텍스트',
@@ -32,6 +34,7 @@ interface MobileSheetHandleProps {
   onDrawFormChange: (patch: Partial<DrawFormState>) => void;
   onAddLine: (lengthMm: number, angleDeg: number, thicknessMm?: number) => void;
   onAddCircle: (radiusMm: number) => void;
+  onAddRect: (widthMm: number, heightMm: number) => void;
   onAddSprinklerHead: (radiusMm: number) => void;
   onAddText: (text: string) => void;
   /** 도형 하나가 선택되어 있으면 새로 그리기 대신 그 도형의 수치를 바로 보여주고 즉시 수정할 수 있게 한다 */
@@ -186,6 +189,7 @@ export default function MobileSheetHandle({
   onDrawFormChange,
   onAddLine,
   onAddCircle,
+  onAddRect,
   onAddSprinklerHead,
   onAddText,
   selectedShape,
@@ -195,24 +199,44 @@ export default function MobileSheetHandle({
   open,
   onToggle,
 }: MobileSheetHandleProps) {
-  const { lengthMm, angleDeg, thicknessMm, radiusMm, textValue } = drawForm;
+  const { lengthMm, angleDeg, thicknessMm, radiusMm, roomWidthMm, roomHeightMm, textValue } = drawForm;
   const length = parseFloat(lengthMm);
   const angle = parseFloat(angleDeg);
   const thickness = parseFloat(thicknessMm);
   const radius = parseFloat(radiusMm);
+  const roomWidth = parseFloat(roomWidthMm);
+  const roomHeight = parseFloat(roomHeightMm);
 
   const lineValid = Number.isFinite(length) && length !== 0 && Number.isFinite(angle) && (!isBeam || (Number.isFinite(thickness) && thickness > 0));
+  const lengthValid = Number.isFinite(length) && length !== 0 && (!isBeam || (Number.isFinite(thickness) && thickness > 0));
   const circleValid = Number.isFinite(radius) && radius > 0;
+  const roomValid = Number.isFinite(roomWidth) && roomWidth > 0 && Number.isFinite(roomHeight) && roomHeight > 0;
   const textValid = textValue.trim().length > 0;
-  const quickValid = mode === 'line' ? lineValid : mode === 'circle' || mode === 'sprinklerHead' ? circleValid : textValid;
+  const quickValid = mode === 'line' ? lineValid : mode === 'room' ? roomValid : mode === 'circle' || mode === 'sprinklerHead' ? circleValid : textValid;
+
+  /** 길이를 넣고 방향을 누르면 그 방향으로 벽을 바로 잇는다 — 길이가 비어 있으면 방향만 골라 둔다 */
+  const handleDirection = (dirDeg: number) => {
+    if (!lengthValid) {
+      onDrawFormChange({ angleDeg: String(dirDeg) });
+      return;
+    }
+    onAddLine(length, dirDeg, isBeam ? thickness : undefined);
+    onDrawFormChange({ lengthMm: '', angleDeg: String(dirDeg) });
+  };
   const allowedModes = getAllowedDrawModes(layerCategory);
+  // 그리는 중에는 방금 그린 도형이 선택돼도 입력칸(길이+방향 등)을 그대로 둔다 — 연속 벽을 끊김 없이 이어 그리기 위함.
+  // 그린 도형의 치수는 캔버스의 숫자를 눌러 고친다
+  const showQuickEdit = !!selectedShape && (mode === 'select' || !isDrawable);
 
   const handleQuickSubmit = (e: FormEvent) => {
     e.preventDefault();
     if (!quickValid) return;
     if (mode === 'line') {
+      // Enter: 마지막으로 고른 방향으로 한 번 더 잇는다
       onAddLine(length, angle, isBeam ? thickness : undefined);
-      onDrawFormChange({ lengthMm: '', angleDeg: '' });
+      onDrawFormChange({ lengthMm: '' });
+    } else if (mode === 'room') {
+      onAddRect(roomWidth, roomHeight);
     } else if (mode === 'circle') {
       onAddCircle(radius);
       onDrawFormChange({ radiusMm: '' });
@@ -249,13 +273,13 @@ export default function MobileSheetHandle({
         <span className="mobile-sheet-handle-row">
           <span className="mobile-sheet-handle-dot" style={{ background: layerColor }} />
           <span className="mobile-sheet-handle-label">
-            {selectedShape ? '선택한 도형 수정' : layerName}
+            {showQuickEdit ? '선택한 도형 수정' : layerName}
           </span>
           <IconChevronUp className={`mobile-sheet-handle-chevron ${open ? 'is-open' : ''}`} />
         </span>
       </button>
 
-      {!open && selectedShape && (
+      {!open && showQuickEdit && selectedShape && (
         <SelectedShapeQuickEdit
           key={selectedShape.id}
           shape={selectedShape}
@@ -265,11 +289,11 @@ export default function MobileSheetHandle({
         />
       )}
 
-      {!open && !selectedShape && isDrawable && mode === 'select' && (
+      {!open && !showQuickEdit && isDrawable && mode === 'select' && (
         <p className="mobile-quick-hint">도형을 탭해 선택하고, 끌어서 옮겨요.</p>
       )}
 
-      {!open && !selectedShape && isDrawable && mode !== 'select' && (
+      {!open && isDrawable && mode !== 'select' && (
         <form className="mobile-quick-form" onSubmit={handleQuickSubmit}>
           {mode === 'line' && (
             <>
@@ -281,14 +305,6 @@ export default function MobileSheetHandle({
                 value={lengthMm}
                 onChange={(e) => onDrawFormChange({ lengthMm: e.target.value })}
               />
-              <input
-                type="number"
-                inputMode="decimal"
-                className="mobile-quick-input"
-                placeholder="각도(°)"
-                value={angleDeg}
-                onChange={(e) => onDrawFormChange({ angleDeg: e.target.value })}
-              />
               {isBeam && (
                 <input
                   type="number"
@@ -299,6 +315,39 @@ export default function MobileSheetHandle({
                   onChange={(e) => onDrawFormChange({ thicknessMm: e.target.value })}
                 />
               )}
+              {LINE_DIRECTIONS.map((d) => (
+                <button
+                  key={d.angleDeg}
+                  type="button"
+                  className={`mobile-quick-dir ${angle === d.angleDeg ? 'is-active' : ''}`}
+                  // 버튼을 눌러도 길이 입력칸의 포커스(숫자 키패드)가 유지되게 한다
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => handleDirection(d.angleDeg)}
+                  aria-label={d.label}
+                >
+                  <IconArrow angleDeg={d.angleDeg} />
+                </button>
+              ))}
+            </>
+          )}
+          {mode === 'room' && (
+            <>
+              <input
+                type="number"
+                inputMode="decimal"
+                className="mobile-quick-input"
+                placeholder="가로(mm)"
+                value={roomWidthMm}
+                onChange={(e) => onDrawFormChange({ roomWidthMm: e.target.value })}
+              />
+              <input
+                type="number"
+                inputMode="decimal"
+                className="mobile-quick-input"
+                placeholder="세로(mm)"
+                value={roomHeightMm}
+                onChange={(e) => onDrawFormChange({ roomHeightMm: e.target.value })}
+              />
             </>
           )}
           {(mode === 'circle' || mode === 'sprinklerHead') && (
@@ -320,9 +369,11 @@ export default function MobileSheetHandle({
               onChange={(e) => onDrawFormChange({ textValue: e.target.value })}
             />
           )}
-          <button type="submit" className="mobile-quick-submit" disabled={!quickValid} aria-label="추가">
-            <IconPlus />
-          </button>
+          {mode !== 'line' && (
+            <button type="submit" className="mobile-quick-submit" disabled={!quickValid} aria-label="추가">
+              <IconPlus />
+            </button>
+          )}
         </form>
       )}
     </div>

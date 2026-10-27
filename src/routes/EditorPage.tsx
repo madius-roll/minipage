@@ -5,7 +5,7 @@ import ToolPanel, { DEFAULT_DRAW_FORM, getAllowedDrawModes, isMouseDrawMode, sup
 import LayerPanel from '../components/layout/LayerPanel';
 import ReviewPanel from '../components/layout/ReviewPanel';
 import PropertyPanel from '../components/layout/PropertyPanel';
-import CadCanvas, { type CadCanvasHandle } from '../components/canvas/CadCanvas';
+import CadCanvas, { type CadCanvasHandle, type DimField, type FinishedRoom, type RectAnchor } from '../components/canvas/CadCanvas';
 import LawGuideModal from '../components/guide/LawGuideModal';
 import MobileSheetHandle from '../components/layout/MobileSheetHandle';
 import MobileLayerStrip from '../components/layout/MobileLayerStrip';
@@ -28,6 +28,17 @@ const PASTE_OFFSET = 300;
 /** 방향키 한 번에 선택 도형을 옮기는 거리(mm) — Shift를 누르면 크게 옮긴다 */
 const NUDGE_MM = 10;
 const NUDGE_LARGE_MM = 100;
+/** 사각형 크기를 바꿀 때 기본으로 제자리에 두는 모서리 — 좌상단 */
+const TOP_LEFT_ANCHOR: RectAnchor = { x: -1, y: -1 };
+
+const samePoint = (a: Point, b: Point) => Math.abs(a.x - b.x) < 0.5 && Math.abs(a.y - b.y) < 0.5;
+
+/** 선의 한쪽 끝을 옮기고 길이·각도를 다시 계산한다 */
+function moveLineEndpoint(line: LineShape, from: Point, to: Point): LineShape {
+  const start = samePoint(line.start, from) ? to : line.start;
+  const end = samePoint(line.end, from) ? to : line.end;
+  return { ...line, start, end, ...lengthAndAngleBetween(start, end) };
+}
 
 const ARROW_DELTAS: Record<string, Point> = {
   ArrowLeft: { x: -1, y: 0 },
@@ -54,6 +65,8 @@ export default function EditorPage() {
   const [drawArmed, setDrawArmed] = useState(false);
   /** 무장 상태에서 다음 클릭이 시작점을 찍는 차례인지, 끝점을 찍어 도형을 완성하는 차례인지 */
   const [drawPhase, setDrawPhase] = useState<'start' | 'end'>('start');
+  /** 이어 그리는 중인 연속 벽 — 처음 시작점(닫기용)과 지금까지 이은 벽 수. 시작점을 새로 찍거나 모드를 바꾸면 끝난다 */
+  const [lineChain, setLineChain] = useState<{ start: Point; segments: number } | null>(null);
   /** 직교 고정 — 켜면 마우스로 그리는 선이 0°/45°/90° 방향으로만 그려진다 (Shift를 누르고 있는 동안에도 같은 효과) */
   const [orthoLock, setOrthoLock] = useState(false);
   const [mergeMode, setMergeMode] = useState(false);
@@ -92,6 +105,7 @@ export default function EditorPage() {
   const handleActiveLayerChange = (id: string) => {
     setActiveLayerId(id);
     setDrawPhase('start');
+    setLineChain(null);
     // "전체 레이어"에서는 그리기를 할 수 없다 — 선택·이동·삭제 등 관리 동작만 가능
     if (id === ALL_LAYERS_ID) {
       setDrawMode('select');
@@ -111,6 +125,7 @@ export default function EditorPage() {
     setDrawMode(nextMode);
     setDrawArmed(isMouseDrawMode(nextMode) && activeLayerId !== ALL_LAYERS_ID);
     setDrawPhase('start');
+    setLineChain(null);
   };
 
   const handleToggleDrawArmed = () => {
@@ -196,6 +211,29 @@ export default function EditorPage() {
     setShapes((prev) => [...prev, { id, layer: activeLayerId, kind: 'line', start, end, lengthMm, angleDeg, thicknessMm }]);
     setPendingPoint(end);
     setSelectedIds([id]);
+    // 끝점이 다음 시작점이 되므로 그대로 이어 그리는 연속 벽이 된다
+    setLineChain((prev) => (prev ? { ...prev, segments: prev.segments + 1 } : { start, segments: 1 }));
+  };
+
+  /** 연속 벽의 마지막 점에서 처음 시작점까지 벽을 이어 닫는다 */
+  const handleCloseChain = () => {
+    if (!lineChain || lineChain.segments < 2 || samePoint(pendingPoint, lineChain.start)) return;
+    const { lengthMm, angleDeg } = lengthAndAngleBetween(pendingPoint, lineChain.start);
+    handleAddLine(lengthMm, angleDeg, beamThickness(), lineChain.start);
+    setLineChain(null);
+    setDrawPhase('start');
+  };
+
+  const handleEndChain = () => {
+    setLineChain(null);
+    setDrawPhase('start');
+  };
+
+  /** 보 레이어에서 그릴 때만 입력해 둔 두께를 쓴다 */
+  const beamThickness = (): number | undefined => {
+    if (layers.find((l) => l.id === activeLayerId)?.category !== 'beam') return undefined;
+    const thickness = parseFloat(drawForm.thicknessMm);
+    return Number.isFinite(thickness) && thickness > 0 ? thickness : undefined;
   };
 
   /** 기둥 레이어에 그리는 원·사각형에는 C1, C2 … 번호를 자동으로 붙인다 */
@@ -211,12 +249,13 @@ export default function EditorPage() {
   };
 
   /** 사각형은 좌상단 꼭짓점(pendingPoint)에서 시작해 오른쪽·아래쪽으로 뻗어나간다 — center 파라미터를 넘기면(마우스 두 번 클릭) 대신 그 중심을 쓴다 */
-  const handleAddRect = (widthMm: number, heightMm: number, center?: Point) => {
+  const handleAddRect = (widthMm: number, heightMm: number, center?: Point): string => {
     pushHistory();
     const id = genId('rect');
     const resolvedCenter = center ?? { x: pendingPoint.x + widthMm / 2, y: pendingPoint.y + heightMm / 2 };
     setShapes((prev) => [...prev, { id, layer: activeLayerId, kind: 'rect', center: resolvedCenter, widthMm, heightMm, label: columnLabel() }]);
     setSelectedIds([id]);
+    return id;
   };
 
   const handleAddSprinklerHead = (radiusMm: number) => {
@@ -255,21 +294,33 @@ export default function EditorPage() {
   /** 캔버스 클릭으로 시작점/중심점을 정할 때 호출 — 무장 상태라면 다음 클릭은 끝점을 찍는 차례로 넘어간다 */
   const handleCanvasClick = (point: Point) => {
     setPendingPoint(point);
+    setLineChain(null);
     if (armed) setDrawPhase('end');
   };
 
   /** 마우스로 그리기 무장 상태에서 캔버스 클릭으로 확정될 때 호출 — pendingPoint(시작점/중심점)를 기준으로 실제 도형을 만든다 */
-  const handleFinishDraw = (point: Point) => {
+  const handleFinishDraw = (point: Point): FinishedRoom | void => {
     const activeLayer = layers.find((l) => l.id === activeLayerId);
-    const isBeam = activeLayer?.category === 'beam';
     const canPickRectShape = supportsRectShape(activeLayer?.category);
 
     if (drawMode === 'line') {
       const { lengthMm, angleDeg } = lengthAndAngleBetween(pendingPoint, point);
-      if (lengthMm > 0) {
-        const thickness = parseFloat(drawForm.thicknessMm);
-        handleAddLine(lengthMm, angleDeg, isBeam && Number.isFinite(thickness) && thickness > 0 ? thickness : undefined, point);
+      if (lengthMm <= 0) return;
+      handleAddLine(lengthMm, angleDeg, beamThickness(), point);
+      // 처음 시작점을 다시 찍으면 연속 벽을 닫고 끝낸다. 아니면 방금 찍은 점에서 다음 벽을 이어 그린다
+      if (lineChain && lineChain.segments >= 2 && samePoint(point, lineChain.start)) {
+        setLineChain(null);
+        setDrawPhase('start');
       }
+      return;
+    } else if (drawMode === 'room') {
+      // 처음 찍은 모서리와 놓은 자리를 방의 마주보는 두 모서리로 삼는다
+      const widthMm = Math.round(Math.abs(point.x - pendingPoint.x));
+      const heightMm = Math.round(Math.abs(point.y - pendingPoint.y));
+      setDrawPhase('start');
+      if (widthMm <= 0 || heightMm <= 0) return;
+      const id = handleAddRect(widthMm, heightMm, { x: (pendingPoint.x + point.x) / 2, y: (pendingPoint.y + point.y) / 2 });
+      return { id, widthMm, heightMm, anchor: { x: point.x >= pendingPoint.x ? -1 : 1, y: point.y >= pendingPoint.y ? -1 : 1 } };
     } else if (drawMode === 'circle') {
       if (canPickRectShape && drawForm.columnShape === 'rect') {
         // 첫 클릭(pendingPoint)과 두 번째 클릭(point)을 사각형의 마주보는 두 꼭짓점으로 삼는다 (중심점 기준 대칭 확장이 아님)
@@ -301,6 +352,7 @@ export default function EditorPage() {
   const handleResetPending = () => {
     setPendingPoint(ORIGIN);
     setDrawPhase('start');
+    setLineChain(null);
     canvasRef.current?.centerOnOrigin();
   };
 
@@ -324,13 +376,20 @@ export default function EditorPage() {
   const handleUndo = () => {
     if (!drawing.undo()) return;
     setSelectedIds([]);
-    setDrawPhase('start');
+    // 연속 벽을 그리다 되돌리면 시작점이 직전 벽 끝으로 돌아가므로, 이어 그리기는 그대로 둔 채 한 칸만 줄인다
+    if (lineChain && lineChain.segments > 1) {
+      setLineChain({ ...lineChain, segments: lineChain.segments - 1 });
+    } else {
+      setLineChain(null);
+      setDrawPhase('start');
+    }
   };
 
   const handleRedo = () => {
     if (!drawing.redo()) return;
     setSelectedIds([]);
     setDrawPhase('start');
+    setLineChain(null);
   };
 
   const handleClearAll = async () => {
@@ -371,11 +430,28 @@ export default function EditorPage() {
     // 값이 그대로면(입력칸을 건드리지 않고 벗어난 경우 등) 실행취소 기록도 끝점 재계산도 하지 않는다
     if (target.lengthMm === lengthMm && target.angleDeg === angleDeg && target.thicknessMm === nextThickness) return;
     pushHistory();
-    setShapes((prev) => prev.map((s) => {
-      if (s.id !== id || s.kind !== 'line') return s;
-      const end = pointFromPolar(s.start, lengthMm, angleDeg);
-      return { ...s, lengthMm, angleDeg, end, thicknessMm: nextThickness };
-    }));
+    const oldEnd = target.end;
+    const newEnd = pointFromPolar(target.start, lengthMm, angleDeg);
+    const dx = newEnd.x - oldEnd.x;
+    const dy = newEnd.y - oldEnd.y;
+    setShapes((prev) => {
+      // 끝점에 이어진 같은 레이어의 벽이 하나뿐이면(방·ㄱ자 벽의 모서리) 그 벽을 통째로 밀어 각도를 지키고,
+      // 그 벽의 반대쪽 끝에 이어진 벽들은 끝점만 따라 늘리거나 줄인다 — 사각형 방의 한 변을 늘리면 맞은편 변도 같이 늘어난다
+      const neighbors = prev.filter((s): s is LineShape => s.kind === 'line' && s.id !== id && s.layer === target.layer && (samePoint(s.start, oldEnd) || samePoint(s.end, oldEnd)));
+      const pushed = neighbors.length === 1 ? neighbors[0] : null;
+      const farEnd = pushed ? (samePoint(pushed.start, oldEnd) ? pushed.end : pushed.start) : null;
+      return prev.map((s) => {
+        if (s.id === id && s.kind === 'line') return { ...s, lengthMm, angleDeg, end: newEnd, thicknessMm: nextThickness };
+        if (s.kind !== 'line' || s.layer !== target.layer || (dx === 0 && dy === 0)) return s;
+        if (pushed && s.id === pushed.id) return translateShape(s, dx, dy);
+        if (pushed && farEnd && (samePoint(s.start, farEnd) || samePoint(s.end, farEnd))) {
+          return moveLineEndpoint(s, farEnd, { x: farEnd.x + dx, y: farEnd.y + dy });
+        }
+        // 여러 벽이 만나는 점(T자 등)이면 이어진 끝점만 따라 옮겨 끊어지지 않게 한다
+        if (!pushed && neighbors.some((n) => n.id === s.id)) return moveLineEndpoint(s, oldEnd, newEnd);
+        return s;
+      });
+    });
   };
 
   const handleUpdateCircle = (id: string, radiusMm: number) => {
@@ -385,16 +461,29 @@ export default function EditorPage() {
     setShapes((prev) => prev.map((s) => (s.id === id && s.kind === 'circle' ? { ...s, radiusMm } : s)));
   };
 
-  /** 그릴 때와 같은 기준(좌상단 꼭짓점 고정)으로 크기를 바꾼다 — 오른쪽·아래쪽으로만 늘어나거나 줄어든다 */
-  const handleUpdateRect = (id: string, widthMm: number, heightMm: number) => {
+  /** anchor 모서리를 제자리에 두고 크기를 바꾼다 — 기본은 그릴 때와 같은 좌상단 고정(오른쪽·아래쪽으로만 늘거나 준다) */
+  const handleUpdateRect = (id: string, widthMm: number, heightMm: number, anchor: RectAnchor = TOP_LEFT_ANCHOR) => {
     const target = shapes.find((s) => s.id === id);
     if (!target || target.kind !== 'rect' || (target.widthMm === widthMm && target.heightMm === heightMm)) return;
     pushHistory();
     setShapes((prev) => prev.map((s) => {
       if (s.id !== id || s.kind !== 'rect') return s;
-      const center = { x: s.center.x + (widthMm - s.widthMm) / 2, y: s.center.y + (heightMm - s.heightMm) / 2 };
+      const center = { x: s.center.x - (anchor.x * (widthMm - s.widthMm)) / 2, y: s.center.y - (anchor.y * (heightMm - s.heightMm)) / 2 };
       return { ...s, center, widthMm, heightMm };
     }));
+  };
+
+  /** 캔버스의 치수 숫자를 눌러 고친 값을 반영한다 */
+  const handleEditDimensions = (id: string, values: Partial<Record<DimField, number>>, anchor?: RectAnchor) => {
+    const target = shapes.find((s) => s.id === id);
+    if (!target) return;
+    if (target.kind === 'line' && values.length !== undefined) {
+      handleUpdateLine(id, values.length, target.angleDeg);
+    } else if (target.kind === 'rect') {
+      handleUpdateRect(id, values.width ?? target.widthMm, values.height ?? target.heightMm, anchor);
+    } else if (target.kind === 'circle' && values.radius !== undefined) {
+      handleUpdateCircle(id, values.radius);
+    }
   };
 
   const handleUpdateText = (id: string, text: string) => {
@@ -444,6 +533,7 @@ export default function EditorPage() {
     setDrawMode('select');
     setDrawArmed(false);
     setDrawPhase('start');
+    setLineChain(null);
     setSelectedIds(pasted.map((s) => s.id));
   };
 
@@ -461,6 +551,7 @@ export default function EditorPage() {
     setDrawMode('select');
     setDrawArmed(false);
     setDrawPhase('start');
+    setLineChain(null);
     setSelectedIds(ids);
     setMobileSheetOpen(false);
   };
@@ -472,6 +563,7 @@ export default function EditorPage() {
     setDrawMode('select');
     setDrawArmed(false);
     setDrawPhase('start');
+    setLineChain(null);
     cancelMerge();
     setCanvasKey((k) => k + 1);
   };
@@ -584,6 +676,7 @@ export default function EditorPage() {
         // 끝점을 찍는 중이었다면 진행 중인 도형만 취소하고, 이미 시작점 차례라면 그리기를 끝내고 선택 도구로 돌아간다
         if (drawPhase === 'end') {
           setDrawPhase('start');
+          setLineChain(null);
         } else {
           handleModeChange('select');
         }
@@ -631,7 +724,7 @@ export default function EditorPage() {
   const activeLayerColor = activeLayerId === ALL_LAYERS_ID ? 'var(--sub)' : (activeLayer?.color ?? 'var(--sub)');
   /** 마우스로 그리기 미리보기에 쓸 도형 종류 — 도형그리기 모드에서 벽체/기둥 레이어의 사각형을 고른 경우만 rect, 나머지(SP헤드반경 포함)는 circle */
   const drawPreviewKind: 'line' | 'circle' | 'rect' =
-    drawMode === 'line' ? 'line' : drawMode === 'circle' && supportsRectShape(activeLayer?.category) && drawForm.columnShape === 'rect' ? 'rect' : 'circle';
+    drawMode === 'line' ? 'line' : drawMode === 'room' ? 'rect' : drawMode === 'circle' && supportsRectShape(activeLayer?.category) && drawForm.columnShape === 'rect' ? 'rect' : 'circle';
 
   return (
     <div className="app-shell" data-mobile-sheet={mobileSheetOpen ? 'open' : 'closed'}>
@@ -747,6 +840,10 @@ export default function EditorPage() {
             drawArmed={armed}
             drawPhase={drawPhase}
             onFinishDraw={handleFinishDraw}
+            onEditDimensions={handleEditDimensions}
+            lineChain={drawMode === 'line' && lineChain ? { segments: lineChain.segments } : null}
+            onCloseChain={handleCloseChain}
+            onEndChain={handleEndChain}
             drawPreviewKind={drawPreviewKind}
             orthoLock={orthoLock}
             uncoveredRects={showUncovered ? review.uncoveredRects : []}
@@ -786,6 +883,7 @@ export default function EditorPage() {
         onDrawFormChange={updateDrawForm}
         onAddLine={handleAddLine}
         onAddCircle={handleAddCircle}
+        onAddRect={handleAddRect}
         onAddSprinklerHead={handleAddSprinklerHead}
         onAddText={handleAddText}
         selectedShape={selectedShapes.length === 1 ? selectedShapes[0] : null}

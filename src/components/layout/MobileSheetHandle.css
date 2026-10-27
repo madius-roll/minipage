@@ -160,3 +160,28 @@
     height: 18px;
   }
 }
+
+@media (max-width: 860px) {
+  /* 연속 벽: 길이를 넣고 누르는 방향 버튼 */
+  .mobile-quick-dir {
+    flex-shrink: 0;
+    width: 38px;
+    height: 38px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-sm);
+    border: 1.5px solid var(--primary);
+    background: transparent;
+    color: var(--primary);
+  }
+
+  .mobile-quick-dir.is-active {
+    background: rgba(29, 185, 84, 0.16);
+  }
+
+  .mobile-quick-dir .icon {
+    width: 18px;
+    height: 18px;
+  }
+}
